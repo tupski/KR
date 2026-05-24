@@ -12,7 +12,7 @@ const supabaseProjectRef = (() => {
   }
 })();
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
   const usingFallback = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
   if (usingFallback) {
     console.warn('[Supabase] ENV tidak lengkap. Aplikasi memakai fallback project Supabase.');
