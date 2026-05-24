@@ -32,14 +32,37 @@ function calcEndAt({ created_at, rental_duration }) {
   return new Date(start.getTime() + hours * 60 * 60 * 1000);
 }
 
+/**
+ * Upsert dengan deteksi inserted-vs-noop.
+ * Mengembalikan { id, inserted } supaya caller bisa hitung jumlah notifikasi
+ * yang benar-benar baru dibuat (bukan no-op karena dedupe_key sudah ada).
+ */
 async function upsertNotification(supabase, payload) {
+  // 1) Cek dulu apakah dedupe_key sudah ada → kalau ada, no-op (anti spam push).
+  if (payload?.dedupe_key) {
+    const { data: existing, error: selErr } = await supabase
+      .from('notifications')
+      .select('id')
+      .eq('dedupe_key', payload.dedupe_key)
+      .maybeSingle();
+    if (selErr) throw selErr;
+    if (existing?.id) return { id: existing.id, inserted: false };
+  }
+
+  // 2) Insert baru.
   const { data, error } = await supabase
     .from('notifications')
-    .upsert(payload, { onConflict: 'dedupe_key' })
+    .insert(payload)
     .select('id')
     .maybeSingle();
-  if (error) throw error;
-  return data?.id || null;
+  if (error) {
+    // Race-condition: dua cron bersamaan menabrak unique constraint dedupe_key
+    if (error.code === '23505' || /duplicate key/i.test(error.message || '')) {
+      return { id: null, inserted: false };
+    }
+    throw error;
+  }
+  return { id: data?.id || null, inserted: true };
 }
 
 // Fetch holiday status for a specific date from API
@@ -74,13 +97,6 @@ async function fetchHolidaysForMonth(year, month) {
  * Deteksi libur panjang: rangkaian hari libur (tanggal merah + weekend) ≥ 3 hari berturut-turut.
  * Termasuk "hari kejepit nasional" (harpitnas): hari kerja yang diapit hari libur di kedua sisi,
  * sehingga banyak orang ambil cuti dan efektif menjadi libur panjang.
- *
- * Contoh harpitnas:
- *   - Minggu + [Senin kerja] + Selasa merah → Senin = harpitnas → 3 hari efektif
- *   - Kamis merah + [Jumat kerja] + Sabtu-Minggu → Jumat = harpitnas → 4 hari efektif
- *
- * holidayMap: { "YYYY-MM-DD": "Nama Libur" }
- * fromDate: Date object (hari ini)
  */
 function detectLongHoliday(holidayMap, fromDate) {
   const NAMA_BULAN_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -95,10 +111,8 @@ function detectLongHoliday(holidayMap, fromDate) {
   function isHoliday(d) {
     return !!holidayMap[toKey(d)];
   }
-  // Hari "off" = weekend ATAU tanggal merah ATAU harpitnas (diapit libur di kedua sisi)
   function isOffDay(d) {
     if (isWeekend(d) || isHoliday(d)) return true;
-    // Cek harpitnas: hari kerja yang diapit hari libur sebelum dan sesudahnya
     const prev = new Date(d); prev.setDate(d.getDate() - 1);
     const next = new Date(d); next.setDate(d.getDate() + 1);
     const prevOff = isWeekend(prev) || isHoliday(prev);
@@ -115,7 +129,6 @@ function detectLongHoliday(holidayMap, fromDate) {
     return `${d.getDate()} ${NAMA_BULAN_SHORT[d.getMonth()]}`;
   }
 
-  // Scan 14 hari ke depan, cari streak ≥ 3 hari off berturut-turut
   for (let startOffset = 0; startOffset <= 14; startOffset++) {
     const startD = new Date(fromDate);
     startD.setDate(fromDate.getDate() + startOffset);
@@ -135,7 +148,6 @@ function detectLongHoliday(holidayMap, fromDate) {
       const endD = new Date(startD);
       endD.setDate(startD.getDate() + streakLen - 1);
 
-      // Kumpulkan nama libur nasional + tandai harpitnas
       const holidayNames = [];
       const harpitnasDays = [];
       const scanD = new Date(startD);
@@ -204,35 +216,51 @@ export default async function handler(req, res) {
   tomorrowWib.setDate(nowWib.getDate() + 1);
   const tomorrowStr = `${tomorrowWib.getFullYear()}-${String(tomorrowWib.getMonth()+1).padStart(2,'0')}-${String(tomorrowWib.getDate()).padStart(2,'0')}`;
   const dowWib = nowWib.getDay();
-  const isTodayWeekend = dowWib === 0 || dowWib === 5 || dowWib === 6;
-  const isTomorrowWeekend = tomorrowWib.getDay() === 0 || tomorrowWib.getDay() === 5 || tomorrowWib.getDay() === 6;
 
   const result = {
-    ok: true, nowIso: now.toISOString(), windowMinutes,
-    created: 0, rooms: { low3: 0, soldOut: 0 }, due: 0, soon30m: 0,
-    overdueTagihan: 0, errors: [],
+    ok: true,
+    nowIso: now.toISOString(),
+    nowWib: nowWib.toISOString(),
+    todayStr,
+    dowWib,
+    windowMinutes,
+    created: 0,
+    sections: {
+      checkout: { processed: 0, due: 0, soon30m: 0, error: null },
+      rooms: { processed: 0, low3: 0, soldOut: 0, error: null },
+      tagihan: { processed: 0, overdue: 0, error: null },
+      holiday: { todayHoliday: null, tomorrowHoliday: null, posted: 0, error: null },
+      weekend: { posted: 0, error: null },
+      longHoliday: { detected: null, posted: 0, error: null },
+    },
+    pushEnabled: false,
   };
 
-  try {
-    const pushEnabled = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+  const pushEnabled = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+  result.pushEnabled = pushEnabled;
 
-    // ================================================================
-    // 1) Checkout due & soon (existing)
-    // ================================================================
+  // Helper untuk update counter "created"
+  const recordInserted = (insertedFlag) => { if (insertedFlag) result.created += 1; };
+
+  // ================================================================
+  // 1) Checkout due & soon
+  // ================================================================
+  let txList = [];
+  try {
     const { data: activeTx, error: txErr } = await supabase
       .from('transactions')
       .select('id, created_at, rental_duration, apartment_location, room_number, customer_name, user_id, checkout_at, checkin_at')
       .is('checkout_at', null);
     if (txErr) throw txErr;
+    txList = activeTx || [];
+    result.sections.checkout.processed = txList.length;
 
-    const txList = activeTx || [];
     for (const tx of txList) {
       const endAt = calcEndAt(tx);
       if (!endAt) continue;
       const diffMs = endAt.getTime() - now.getTime();
       const endLabel = formatWibDateTime(endAt.toISOString());
 
-      // Hitung durasi menginap
       const checkinAt = tx.checkin_at ? new Date(tx.checkin_at) : new Date(tx.created_at);
       const durasiJam = Number(tx.rental_duration || 1);
       const durasiLabel = durasiJam >= 24 ? `${Math.floor(durasiJam/24)} malam` : `${durasiJam} jam`;
@@ -252,15 +280,17 @@ export default async function handler(req, res) {
         const dedupe = `checkout_due:tx:${tx.id}`;
         const title = `⏰ Waktunya Checkout: ${tx.apartment_location} ${tx.room_number}`;
         const body = `${tx.customer_name || 'Customer'} sudah melewati waktu sewa (${endLabel}). Check-in: ${checkinLabel}, durasi: ${durasiLabel}.`;
-        await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
-        await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
-        if (tx.user_id) await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:user:${tx.user_id}`, audience_user_id: tx.user_id });
-        if (pushEnabled) {
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
-          if (tx.user_id) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_user_id: tx.user_id });
+        const a = await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
+        const b = await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
+        let c = { inserted: false };
+        if (tx.user_id) c = await upsertNotification(supabase, { type: 'checkout_due', title, body, data: baseData, dedupe_key: `${dedupe}:user:${tx.user_id}`, audience_user_id: tx.user_id });
+        recordInserted(a.inserted); recordInserted(b.inserted); recordInserted(c.inserted);
+        if (pushEnabled && (a.inserted || b.inserted || c.inserted)) {
+          if (a.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
+          if (b.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
+          if (c.inserted && tx.user_id) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_user_id: tx.user_id });
         }
-        result.due += 1; result.created += 2 + (tx.user_id ? 1 : 0);
+        if (a.inserted || b.inserted || c.inserted) result.sections.checkout.due += 1;
         continue;
       }
 
@@ -269,21 +299,27 @@ export default async function handler(req, res) {
         const dedupe = `checkout_30m:tx:${tx.id}`;
         const title = `🔔 Checkout ${minutesLeft} Menit Lagi`;
         const body = `${tx.apartment_location} ${tx.room_number} (${tx.customer_name || 'Customer'}) berakhir ${endLabel}. Check-in: ${checkinLabel}, durasi: ${durasiLabel}.`;
-        await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
-        await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
-        if (tx.user_id) await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:user:${tx.user_id}`, audience_user_id: tx.user_id });
-        if (pushEnabled) {
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
-          if (tx.user_id) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_user_id: tx.user_id });
+        const a = await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
+        const b = await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
+        let c = { inserted: false };
+        if (tx.user_id) c = await upsertNotification(supabase, { type: 'checkout_soon', title, body, data: { ...baseData, minutes_left: minutesLeft }, dedupe_key: `${dedupe}:user:${tx.user_id}`, audience_user_id: tx.user_id });
+        recordInserted(a.inserted); recordInserted(b.inserted); recordInserted(c.inserted);
+        if (pushEnabled && (a.inserted || b.inserted || c.inserted)) {
+          if (a.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
+          if (b.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
+          if (c.inserted && tx.user_id) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_user_id: tx.user_id });
         }
-        result.soon30m += 1; result.created += 2 + (tx.user_id ? 1 : 0);
+        if (a.inserted || b.inserted || c.inserted) result.sections.checkout.soon30m += 1;
       }
     }
+  } catch (e) {
+    result.sections.checkout.error = e?.message || String(e);
+  }
 
-    // ================================================================
-    // 2) Kamar habis / hampir habis (existing)
-    // ================================================================
+  // ================================================================
+  // 2) Kamar habis / hampir habis
+  // ================================================================
+  try {
     const [{ data: lokasiRows, error: locErr }, { data: kamarRows, error: kamarErr }] = await Promise.all([
       supabase.from('lokasi_apartemen').select('name').order('name'),
       supabase.from('nomor_kamar').select('name, lokasi').order('name'),
@@ -300,6 +336,7 @@ export default async function handler(req, res) {
 
     const kamar = kamarRows || [];
     const lokasi = (lokasiRows || []).map((x) => x.name);
+    result.sections.rooms.processed = lokasi.length;
 
     for (const loc of lokasi) {
       const rooms = kamar.filter((r) => r.lokasi === loc);
@@ -310,103 +347,125 @@ export default async function handler(req, res) {
         const dedupe = `rooms_sold_out:${loc}:${todayStr}`;
         const title = `🚫 Kamar Habis: ${loc}`;
         const body = `Semua kamar di ${loc} sedang terisi.`;
-        await upsertNotification(supabase, { type: 'rooms_sold_out', title, body, data: { lokasi: loc, available_count: 0 }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
-        await upsertNotification(supabase, { type: 'rooms_sold_out', title, body, data: { lokasi: loc, available_count: 0 }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
-        if (pushEnabled) {
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
+        const a = await upsertNotification(supabase, { type: 'rooms_sold_out', title, body, data: { lokasi: loc, available_count: 0 }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
+        const b = await upsertNotification(supabase, { type: 'rooms_sold_out', title, body, data: { lokasi: loc, available_count: 0 }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
+        recordInserted(a.inserted); recordInserted(b.inserted);
+        if (pushEnabled && (a.inserted || b.inserted)) {
+          if (a.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
+          if (b.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
         }
-        result.rooms.soldOut += 1; result.created += 2;
+        if (a.inserted || b.inserted) result.sections.rooms.soldOut += 1;
       } else if (availableCount < 3) {
         const dedupe = `rooms_low3:${loc}:${todayStr}`;
         const title = `⚠️ Kamar Tinggal ${availableCount}: ${loc}`;
         const body = `Sisa ${availableCount} kamar tersedia di ${loc}.`;
-        await upsertNotification(supabase, { type: 'rooms_low', title, body, data: { lokasi: loc, available_count: availableCount }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
-        await upsertNotification(supabase, { type: 'rooms_low', title, body, data: { lokasi: loc, available_count: availableCount }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
-        if (pushEnabled) {
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
-          await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
+        const a = await upsertNotification(supabase, { type: 'rooms_low', title, body, data: { lokasi: loc, available_count: availableCount }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
+        const b = await upsertNotification(supabase, { type: 'rooms_low', title, body, data: { lokasi: loc, available_count: availableCount }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
+        recordInserted(a.inserted); recordInserted(b.inserted);
+        if (pushEnabled && (a.inserted || b.inserted)) {
+          if (a.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'admin' });
+          if (b.inserted) await sendPushToAudience({ title, body, url: '/?tab=kamar', audience_role: 'super_admin' });
         }
-        result.rooms.low3 += 1; result.created += 2;
+        if (a.inserted || b.inserted) result.sections.rooms.low3 += 1;
       }
     }
+  } catch (e) {
+    result.sections.rooms.error = e?.message || String(e);
+  }
 
-    // ================================================================
-    // 3) Tagihan unit terlambat (NEW)
-    // ================================================================
+  // ================================================================
+  // 3) Tagihan unit terlambat
+  // ================================================================
+  try {
     const { data: overdueTagihan, error: tagihanErr } = await supabase
       .from('tagihan_bulanan')
       .select('id, apartment_location, room_number, amount, due_date')
       .eq('status', 'unpaid')
       .lt('due_date', todayStr);
+    if (tagihanErr) throw tagihanErr;
 
-    if (!tagihanErr && overdueTagihan && overdueTagihan.length > 0) {
-      for (const tagihan of overdueTagihan) {
-        const dueDate = new Date(tagihan.due_date);
-        const diffDays = Math.floor((nowWib - dueDate) / (1000 * 60 * 60 * 24));
-        const dedupe = `tagihan_overdue:${tagihan.id}:${todayStr}`;
-        const title = `🔴 Tagihan Terlambat: ${tagihan.apartment_location} - ${tagihan.room_number}`;
-        const body = `Tagihan unit ${tagihan.apartment_location} - ${tagihan.room_number} sudah terlambat ${diffDays} hari (jatuh tempo: ${new Date(tagihan.due_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}).`;
+    const list = overdueTagihan || [];
+    result.sections.tagihan.processed = list.length;
 
-        await upsertNotification(supabase, { type: 'tagihan_overdue', title, body, data: { tagihan_id: tagihan.id, apartment_location: tagihan.apartment_location, room_number: tagihan.room_number, due_date: tagihan.due_date, overdue_days: diffDays }, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
-        await upsertNotification(supabase, { type: 'tagihan_overdue', title, body, data: { tagihan_id: tagihan.id, apartment_location: tagihan.apartment_location, room_number: tagihan.room_number, due_date: tagihan.due_date, overdue_days: diffDays }, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
-        if (pushEnabled) {
-          await sendPushToAudience({ title, body, url: '/?tab=finance', audience_role: 'admin' });
-          await sendPushToAudience({ title, body, url: '/?tab=finance', audience_role: 'super_admin' });
-        }
-        result.overdueTagihan += 1; result.created += 2;
+    for (const tagihan of list) {
+      const dueDate = new Date(tagihan.due_date);
+      const diffDays = Math.max(1, Math.floor((nowWib - dueDate) / (1000 * 60 * 60 * 24)));
+      const dedupe = `tagihan_overdue:${tagihan.id}:${todayStr}`;
+      const title = `🔴 Tagihan Terlambat: ${tagihan.apartment_location} - ${tagihan.room_number}`;
+      const body = `Tagihan unit ${tagihan.apartment_location} - ${tagihan.room_number} sudah terlambat ${diffDays} hari (jatuh tempo: ${new Date(tagihan.due_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}).`;
+      const data = { tagihan_id: tagihan.id, apartment_location: tagihan.apartment_location, room_number: tagihan.room_number, due_date: tagihan.due_date, overdue_days: diffDays };
+
+      const a = await upsertNotification(supabase, { type: 'tagihan_overdue', title, body, data, dedupe_key: `${dedupe}:admin`, audience_role: 'admin' });
+      const b = await upsertNotification(supabase, { type: 'tagihan_overdue', title, body, data, dedupe_key: `${dedupe}:super_admin`, audience_role: 'super_admin' });
+      recordInserted(a.inserted); recordInserted(b.inserted);
+      if (pushEnabled && (a.inserted || b.inserted)) {
+        if (a.inserted) await sendPushToAudience({ title, body, url: '/?tab=finance', audience_role: 'admin' });
+        if (b.inserted) await sendPushToAudience({ title, body, url: '/?tab=finance', audience_role: 'super_admin' });
       }
+      if (a.inserted || b.inserted) result.sections.tagihan.overdue += 1;
     }
+  } catch (e) {
+    result.sections.tagihan.error = e?.message || String(e);
+  }
 
-    // ================================================================
-    // 4) Libur nasional & weekend (updated — semua ke 'all')
-    // ================================================================
-    // Fetch libur hari ini, besok, dan 7 hari ke depan (untuk libur panjang)
+  // ================================================================
+  // 4) Libur nasional & weekend (audience 'all')
+  // ================================================================
+  try {
     const [todayHoliday, tomorrowHoliday] = await Promise.all([
       fetchHolidayForDate(nowWib.getFullYear(), nowWib.getMonth()+1, nowWib.getDate()),
       fetchHolidayForDate(tomorrowWib.getFullYear(), tomorrowWib.getMonth()+1, tomorrowWib.getDate()),
     ]);
+    result.sections.holiday.todayHoliday = todayHoliday;
+    result.sections.holiday.tomorrowHoliday = tomorrowHoliday;
 
-    // a) Hari ini libur nasional
     if (todayHoliday) {
       const title = `🔥 Hari Ini Libur: ${todayHoliday}`;
       const body = `Hari ini ${fmtTanggal(nowWib)} adalah ${todayHoliday}. Tamu makin rame, siap-siap sibuk!`;
-      await upsertNotification(supabase, { type: 'holiday_today', title, body, data: { date: todayStr }, dedupe_key: `holiday_today:${todayStr}`, audience_role: 'all' });
-      if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-      result.created += 1;
+      const r = await upsertNotification(supabase, { type: 'holiday_today', title, body, data: { date: todayStr }, dedupe_key: `holiday_today:${todayStr}`, audience_role: 'all' });
+      recordInserted(r.inserted);
+      if (pushEnabled && r.inserted) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
+      if (r.inserted) result.sections.holiday.posted += 1;
     }
 
-    // b) Hari ini weekend (Jumat = weekend dimulai)
-    if (dowWib === 5) {
-      const title = `🚀 Weekend Dimulai!`;
-      const body = `Hari ini ${NAMA_HARI[dowWib]}, ${fmtTanggal(nowWib)}. Weekend = tamu rame! Semangat kerjanya guys!`;
-      await upsertNotification(supabase, { type: 'weekend', title, body, data: { date: todayStr }, dedupe_key: `weekend_start:${todayStr}`, audience_role: 'all' });
-      if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-      result.created += 1;
-    }
-
-    // c) Besok libur nasional
     if (tomorrowHoliday) {
       const title = `⚡ Besok Libur: ${tomorrowHoliday}`;
       const body = `Besok ${fmtTanggal(tomorrowWib)} adalah ${tomorrowHoliday}. Bersiap, tamu bakal rame besok!`;
-      await upsertNotification(supabase, { type: 'holiday_tomorrow', title, body, data: { date: tomorrowStr }, dedupe_key: `holiday_tomorrow:${tomorrowStr}`, audience_role: 'all' });
-      if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-      result.created += 1;
+      const r = await upsertNotification(supabase, { type: 'holiday_tomorrow', title, body, data: { date: tomorrowStr }, dedupe_key: `holiday_tomorrow:${tomorrowStr}`, audience_role: 'all' });
+      recordInserted(r.inserted);
+      if (pushEnabled && r.inserted) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
+      if (r.inserted) result.sections.holiday.posted += 1;
     }
+  } catch (e) {
+    result.sections.holiday.error = e?.message || String(e);
+  }
 
-    // d) Besok weekend (Kamis = besok Jumat/weekend)
-    if (dowWib === 4) { // Kamis
+  // Weekend (Jumat = mulai weekend; Kamis = besok weekend)
+  try {
+    if (dowWib === 5) {
+      const title = `🚀 Weekend Dimulai!`;
+      const body = `Hari ini ${NAMA_HARI[dowWib]}, ${fmtTanggal(nowWib)}. Weekend = tamu rame! Semangat kerjanya guys!`;
+      const r = await upsertNotification(supabase, { type: 'weekend', title, body, data: { date: todayStr }, dedupe_key: `weekend_start:${todayStr}`, audience_role: 'all' });
+      recordInserted(r.inserted);
+      if (pushEnabled && r.inserted) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
+      if (r.inserted) result.sections.weekend.posted += 1;
+    }
+    if (dowWib === 4) {
       const title = `🎯 Besok Weekend!`;
       const body = `Besok ${NAMA_HARI[tomorrowWib.getDay()]}, ${fmtTanggal(tomorrowWib)}. Persiapkan diri, tamu weekend mulai berdatangan!`;
-      await upsertNotification(supabase, { type: 'weekend_tomorrow', title, body, data: { date: tomorrowStr }, dedupe_key: `weekend_tomorrow:${tomorrowStr}`, audience_role: 'all' });
-      if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-      result.created += 1;
+      const r = await upsertNotification(supabase, { type: 'weekend_tomorrow', title, body, data: { date: tomorrowStr }, dedupe_key: `weekend_tomorrow:${tomorrowStr}`, audience_role: 'all' });
+      recordInserted(r.inserted);
+      if (pushEnabled && r.inserted) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
+      if (r.inserted) result.sections.weekend.posted += 1;
     }
+  } catch (e) {
+    result.sections.weekend.error = e?.message || String(e);
+  }
 
-    // ================================================================
-    // 5) Libur panjang (NEW) — deteksi & notifikasi H-2 sebelum mulai
-    // ================================================================
-    // Fetch holidays untuk bulan ini dan bulan depan (untuk deteksi libur panjang)
+  // ================================================================
+  // 5) Libur panjang
+  // ================================================================
+  try {
     const thisMonthHolidays = await fetchHolidaysForMonth(nowWib.getFullYear(), nowWib.getMonth()+1);
     const nextMonthDate = new Date(nowWib);
     nextMonthDate.setMonth(nowWib.getMonth() + 1);
@@ -414,43 +473,49 @@ export default async function handler(req, res) {
     const combinedHolidayMap = { ...thisMonthHolidays, ...nextMonthHolidays };
 
     const longHoliday = detectLongHoliday(combinedHolidayMap, nowWib);
-
     if (longHoliday) {
       const { startDate, endDate, totalDays, description, startOffset } = longHoliday;
+      result.sections.longHoliday.detected = {
+        startDate: startDate.toISOString().slice(0,10),
+        endDate: endDate.toISOString().slice(0,10),
+        totalDays, description, startOffset,
+      };
 
-      // Notifikasi H-2 sebelum libur panjang dimulai
+      let title = null, body = null, dedupe = null;
       if (startOffset === 2) {
-        const title = `🏖️ Libur Panjang ${totalDays} Hari Lusa!`;
-        const body = `Libur panjang ${totalDays} hari dimulai ${fmtTanggal(startDate)} s/d ${fmtTanggal(endDate)} (${description}). Tamu diprediksi rame, siapkan semua!`;
-        const dedupe = `long_holiday_h2:${startDate.toISOString().slice(0,10)}`;
-        await upsertNotification(supabase, { type: 'long_holiday', title, body, data: { start_date: startDate.toISOString().slice(0,10), end_date: endDate.toISOString().slice(0,10), total_days: totalDays, description }, dedupe_key: dedupe, audience_role: 'all' });
-        if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-        result.created += 1;
+        title = `🏖️ Libur Panjang ${totalDays} Hari Lusa!`;
+        body  = `Libur panjang ${totalDays} hari dimulai ${fmtTanggal(startDate)} s/d ${fmtTanggal(endDate)} (${description}). Tamu diprediksi rame, siapkan semua!`;
+        dedupe = `long_holiday_h2:${startDate.toISOString().slice(0,10)}`;
+      } else if (startOffset === 1) {
+        title = `🔥 Besok Libur Panjang ${totalDays} Hari!`;
+        body  = `Libur panjang ${totalDays} hari mulai besok ${fmtTanggal(startDate)} s/d ${fmtTanggal(endDate)} (${description}). Pastikan semua siap!`;
+        dedupe = `long_holiday_h1:${startDate.toISOString().slice(0,10)}`;
+      } else if (startOffset === 0) {
+        title = `🎉 Libur Panjang ${totalDays} Hari Dimulai!`;
+        body  = `Libur panjang ${totalDays} hari hari ini s/d ${fmtTanggal(endDate)} (${description}). Tamu rame, semangat!`;
+        dedupe = `long_holiday_start:${startDate.toISOString().slice(0,10)}`;
       }
 
-      // Notifikasi H-1 sebelum libur panjang dimulai
-      if (startOffset === 1) {
-        const title = `🔥 Besok Libur Panjang ${totalDays} Hari!`;
-        const body = `Libur panjang ${totalDays} hari mulai besok ${fmtTanggal(startDate)} s/d ${fmtTanggal(endDate)} (${description}). Pastikan semua siap!`;
-        const dedupe = `long_holiday_h1:${startDate.toISOString().slice(0,10)}`;
-        await upsertNotification(supabase, { type: 'long_holiday', title, body, data: { start_date: startDate.toISOString().slice(0,10), end_date: endDate.toISOString().slice(0,10), total_days: totalDays, description }, dedupe_key: dedupe, audience_role: 'all' });
-        if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-        result.created += 1;
-      }
-
-      // Notifikasi hari pertama libur panjang
-      if (startOffset === 0) {
-        const title = `🎉 Libur Panjang ${totalDays} Hari Dimulai!`;
-        const body = `Libur panjang ${totalDays} hari hari ini s/d ${fmtTanggal(endDate)} (${description}). Tamu rame, semangat!`;
-        const dedupe = `long_holiday_start:${startDate.toISOString().slice(0,10)}`;
-        await upsertNotification(supabase, { type: 'long_holiday', title, body, data: { start_date: startDate.toISOString().slice(0,10), end_date: endDate.toISOString().slice(0,10), total_days: totalDays, description }, dedupe_key: dedupe, audience_role: 'all' });
-        if (pushEnabled) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
-        result.created += 1;
+      if (title) {
+        const r = await upsertNotification(supabase, {
+          type: 'long_holiday', title, body,
+          data: {
+            start_date: startDate.toISOString().slice(0,10),
+            end_date:   endDate.toISOString().slice(0,10),
+            total_days: totalDays, description,
+          },
+          dedupe_key: dedupe, audience_role: 'all',
+        });
+        recordInserted(r.inserted);
+        if (pushEnabled && r.inserted) await sendPushToAudience({ title, body, url: '/', audience_role: 'all' });
+        if (r.inserted) result.sections.longHoliday.posted += 1;
       }
     }
-
-    return res.status(200).json(result);
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || 'Gagal generate notifikasi', ...result });
+    result.sections.longHoliday.error = e?.message || String(e);
   }
+
+  // Aggregate ok flag — false jika ada error di section apa pun
+  result.ok = !Object.values(result.sections).some((s) => s.error);
+  return res.status(result.ok ? 200 : 207).json(result);
 }
