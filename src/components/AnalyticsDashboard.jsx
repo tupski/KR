@@ -11,7 +11,12 @@ import {
   parseISO,
 } from 'date-fns';
 import { supabase } from '@/lib/customSupabaseClient';
+import { clearRpcCache } from '@/hooks/useRpcQuery';
 
+import KpiCardsHeader from './analytics/KpiCardsHeader';
+import YoYComparisonSection from './analytics/YoYComparisonSection';
+import MonthlyRevenueTrendSection from './analytics/MonthlyRevenueTrendSection';
+import OutstandingBillsSection from './analytics/OutstandingBillsSection';
 import OccupancyByLocationSection from './analytics/OccupancyByLocationSection';
 import ProfitSection from './analytics/ProfitSection';
 import CheckinHeatmapSection from './analytics/CheckinHeatmapSection';
@@ -20,6 +25,13 @@ import RepeatGuestSection from './analytics/RepeatGuestSection';
 import LocationFullnessSection from './analytics/LocationFullnessSection';
 import StayDurationSection from './analytics/StayDurationSection';
 import DailyRevenueTrendSection from './analytics/DailyRevenueTrendSection';
+import NetProfitSection from './analytics/NetProfitSection';
+import ExpenseBreakdownSection from './analytics/ExpenseBreakdownSection';
+import PaymentMethodSection from './analytics/PaymentMethodSection';
+import ShiftPerformanceSection from './analytics/ShiftPerformanceSection';
+import EmployeePerformanceSection from './analytics/EmployeePerformanceSection';
+import MarketingPerformanceSection from './analytics/MarketingPerformanceSection';
+import UnderperformingRoomsSection from './analytics/UnderperformingRoomsSection';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -199,6 +211,14 @@ const AnalyticsDashboard = () => {
     location: null,
   });
 
+  // Bumped on global refresh; passed as `key` to remount semua section
+  // sehingga refetch dijalankan ulang.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const handleGlobalRefresh = () => {
+    clearRpcCache();
+    setRefreshKey((k) => k + 1);
+  };
+
   const [locationOptions, setLocationOptions] = useState([]);
   const [filterError, setFilterError] = useState(null);
 
@@ -264,22 +284,72 @@ const AnalyticsDashboard = () => {
         />
 
         {/* ----------------------------------------------------------------
-            Report sections — order sesuai requirements:
-            Okupansi, Profit, Checkin Heatmap, Sumber Tamu, Repeat Guest,
-            Lokasi Sering Penuh, Durasi Menginap, Tren Pendapatan Harian
+            Section: Finance
         ---------------------------------------------------------------- */}
+        {/* ----------------------------------------------------------------
+            KPI Cards Header (Tier 4) — ringkasan + delta vs periode sebelumnya
+        ---------------------------------------------------------------- */}
+        <KpiCardsHeader
+          key={`kpi-${refreshKey}`}
+          filter={appliedFilter}
+          onGlobalRefresh={handleGlobalRefresh}
+        />
 
-        <OccupancyByLocationSection filter={appliedFilter} />
-        <ProfitSection filter={appliedFilter} />
-        <CheckinHeatmapSection filter={appliedFilter} />
-        <GuestSourceSection filter={appliedFilter} />
-        <RepeatGuestSection filter={appliedFilter} />
-        <LocationFullnessSection filter={appliedFilter} />
-        <StayDurationSection filter={appliedFilter} />
-        <DailyRevenueTrendSection filter={appliedFilter} />
+        {/* ----------------------------------------------------------------
+            Section: Finance
+        ---------------------------------------------------------------- */}
+        <SectionGroupHeader title="Keuangan" />
+        <NetProfitSection key={`np-${refreshKey}`} filter={appliedFilter} />
+        <YoYComparisonSection key={`yoy-${refreshKey}`} filter={appliedFilter} />
+        <ProfitSection key={`p-${refreshKey}`} filter={appliedFilter} />
+        <ExpenseBreakdownSection key={`eb-${refreshKey}`} filter={appliedFilter} />
+        <PaymentMethodSection key={`pm-${refreshKey}`} filter={appliedFilter} />
+        <DailyRevenueTrendSection key={`drt-${refreshKey}`} filter={appliedFilter} />
+        <MonthlyRevenueTrendSection key={`mrt-${refreshKey}`} filter={appliedFilter} />
+        <OutstandingBillsSection key={`ob-${refreshKey}`} filter={appliedFilter} />
+
+        {/* ----------------------------------------------------------------
+            Section: Okupansi
+        ---------------------------------------------------------------- */}
+        <SectionGroupHeader title="Okupansi & Kamar" />
+        <OccupancyByLocationSection key={`obl-${refreshKey}`} filter={appliedFilter} />
+        <LocationFullnessSection key={`lf-${refreshKey}`} filter={appliedFilter} />
+        <UnderperformingRoomsSection key={`ur-${refreshKey}`} filter={appliedFilter} />
+
+        {/* ----------------------------------------------------------------
+            Section: Operasional
+        ---------------------------------------------------------------- */}
+        <SectionGroupHeader title="Operasional" />
+        <ShiftPerformanceSection key={`sp-${refreshKey}`} filter={appliedFilter} />
+        <EmployeePerformanceSection key={`ep-${refreshKey}`} filter={appliedFilter} />
+        <CheckinHeatmapSection key={`ch-${refreshKey}`} filter={appliedFilter} />
+
+        {/* ----------------------------------------------------------------
+            Section: Marketing & Tamu
+        ---------------------------------------------------------------- */}
+        <SectionGroupHeader title="Marketing & Tamu" />
+        <MarketingPerformanceSection key={`mp-${refreshKey}`} filter={appliedFilter} />
+        <GuestSourceSection key={`gs-${refreshKey}`} filter={appliedFilter} />
+        <RepeatGuestSection key={`rg-${refreshKey}`} filter={appliedFilter} />
+        <StayDurationSection key={`sd-${refreshKey}`} filter={appliedFilter} />
+
       </motion.div>
     </div>
   );
 };
+
+/**
+ * SectionGroupHeader — pemisah visual antar grup section.
+ */
+function SectionGroupHeader({ title }) {
+  return (
+    <div className="pt-4 pb-1 px-1">
+      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+        {title}
+      </h3>
+      <div className="h-px bg-gradient-to-r from-blue-200 via-gray-200 to-transparent mt-1" />
+    </div>
+  );
+}
 
 export default AnalyticsDashboard;

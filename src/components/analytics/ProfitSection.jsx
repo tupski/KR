@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -38,7 +39,7 @@ function ProfitSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, isLoading, error } = useRpcQuery({
+  const { data, isLoading, error, fetchAll } = useRpcQuery({
     rpcName: 'get_profit_per_location',
     params: {
       p_start_date: startDate,
@@ -49,6 +50,17 @@ function ProfitSection({ filter }) {
   });
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `profit-per-lokasi_${startDate}_${endDate}`,
+    columns: [
+      { key: 'apartment_location', label: 'Lokasi' },
+      { key: 'total_revenue', label: 'Total Pendapatan' },
+      { key: 'total_transactions', label: 'Jumlah Transaksi' },
+      { key: 'avg_revenue_per_transaction', label: 'Rata-rata per Transaksi' },
+    ],
+  });
 
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Profit per Lokasi" message={error} />;
@@ -74,6 +86,8 @@ function ProfitSection({ filter }) {
       title="Profit per Lokasi"
       periodLabel={periodLabel}
       subtitle="Total pendapatan dan rata-rata per transaksi setiap lokasi."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {/* Bar chart horizontal */}
       <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 36)}>

@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatPersen } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -32,7 +33,7 @@ function GuestSourceSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage } = useRpcQuery({
+  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage, fetchAll } = useRpcQuery({
     rpcName: 'get_guest_source_summary',
     params: {
       p_start_date: startDate,
@@ -44,6 +45,17 @@ function GuestSourceSection({ filter }) {
   });
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `sumber-tamu_${startDate}_${endDate}`,
+    columns: [
+      { key: 'source_name', label: 'Sumber' },
+      { key: 'transaction_count', label: 'Jumlah Transaksi' },
+      { key: 'total_revenue', label: 'Total Pendapatan' },
+      { key: 'percentage', label: 'Persentase (%)' },
+    ],
+  });
 
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Sumber Tamu" message={error} />;
@@ -63,6 +75,8 @@ function GuestSourceSection({ filter }) {
       title="Sumber Tamu"
       periodLabel={periodLabel}
       subtitle="Distribusi tamu berdasarkan marketing/OTA. 10 sumber per halaman."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {/* Bar chart horizontal */}
       <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 32)}>

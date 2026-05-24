@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar } from 'lucide-react';
+import { Calendar, Download } from 'lucide-react';
 
 /**
  * SectionCard — wrapper card dengan judul + label periode untuk setiap section.
@@ -9,20 +9,36 @@ import { Calendar } from 'lucide-react';
  * @param {string} props.title - Judul section
  * @param {string} [props.periodLabel] - Label periode ringkas (mis. "30 hari terakhir")
  * @param {string} [props.subtitle] - Deskripsi singkat tambahan opsional
+ * @param {() => void} [props.onExport] - Handler tombol export CSV. Tombol disembunyikan jika undefined.
+ * @param {boolean} [props.isExporting] - Loading state untuk tombol export
  * @param {React.ReactNode} props.children
  */
-export function SectionCard({ title, periodLabel, subtitle, children }) {
+export function SectionCard({ title, periodLabel, subtitle, onExport, isExporting, children }) {
   return (
     <div className="glassmorphic-card p-5 space-y-4">
       <div className="space-y-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-bold text-lg text-gray-800">{title}</h2>
-          {periodLabel ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold whitespace-nowrap">
-              <Calendar className="w-3 h-3" />
-              {periodLabel}
-            </span>
-          ) : null}
+          <div className="flex items-center gap-2 flex-wrap">
+            {periodLabel ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold whitespace-nowrap">
+                <Calendar className="w-3 h-3" />
+                {periodLabel}
+              </span>
+            ) : null}
+            {onExport ? (
+              <button
+                type="button"
+                onClick={onExport}
+                disabled={isExporting}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-600 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                aria-label="Download CSV"
+              >
+                <Download className="w-3 h-3" />
+                {isExporting ? 'Mengunduh…' : 'CSV'}
+              </button>
+            ) : null}
+          </div>
         </div>
         {subtitle ? (
           <p className="text-xs text-gray-500">{subtitle}</p>

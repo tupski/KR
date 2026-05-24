@@ -16,23 +16,28 @@ import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeade
 import { formatRupiah, formatPersen } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
 
-const BAR_COLOR = '#3b82f6';
-const HIGHLIGHT_COLOR = '#10b981';
+const SHIFT_COLORS = {
+    Pagi: '#f59e0b', // amber
+    Malam: '#6366f1', // indigo
+    'Long Shift': '#10b981', // emerald
+    'Tidak Diisi': '#9ca3af', // gray
+};
+const DEFAULT_COLOR = '#3b82f6';
 
 /**
- * OccupancyByLocationSection — Laporan Okupansi per Lokasi Apartemen
+ * ShiftPerformanceSection — Performa per Shift
  *
- * Menampilkan bar chart horizontal dan tabel okupansi per lokasi
- * (bukan per kamar). total_rooms diambil dari tabel `nomor_kamar`.
+ * Bar chart vertikal jumlah transaksi per shift (Pagi / Malam / Long Shift)
+ * + tabel sortable. Berguna untuk staffing dan analisa produktivitas.
  *
  * @param {{ filter: { startDate: string, endDate: string, location: string|null } }} props
  */
-function OccupancyByLocationSection({ filter }) {
+function ShiftPerformanceSection({ filter }) {
     const { startDate, endDate, location } = filter ?? {};
     const periodLabel = formatPeriodLabel(startDate, endDate);
 
     const { data, isLoading, error, fetchAll } = useRpcQuery({
-        rpcName: 'get_occupancy_per_location',
+        rpcName: 'get_performance_by_shift',
         params: {
             p_start_date: startDate,
             p_end_date: endDate,
@@ -44,66 +49,43 @@ function OccupancyByLocationSection({ filter }) {
     const { sortedData, requestSort, getSortIcon } = useSortableData(data);
 
     const { exportCsv, isExporting } = useSectionCsvExport({
-        fetchAll,
-        filename: `okupansi-per-lokasi_${startDate}_${endDate}`,
-        columns: [
-            { key: 'apartment_location', label: 'Lokasi' },
-            { key: 'total_rooms', label: 'Total Unit' },
-            { key: 'total_transactions', label: 'Jumlah Transaksi' },
-            { key: 'total_revenue', label: 'Total Pendapatan' },
-            { key: 'occupancy_rate', label: 'Occupancy Rate (%)' },
-        ],
+      fetchAll,
+      filename: `performa-shift_${startDate}_${endDate}`,
+      columns: [
+        { key: 'shift', label: 'Shift' },
+        { key: 'total_transactions', label: 'Jumlah Transaksi' },
+        { key: 'total_revenue', label: 'Total Pendapatan' },
+        { key: 'avg_revenue_per_transaction', label: 'Rata-rata per Transaksi' },
+        { key: 'percentage', label: 'Persentase (%)' },
+      ],
     });
 
     if (isLoading) return <SectionSkeleton />;
-    if (error) return <SectionError name="Okupansi per Lokasi Apartemen" message={error} />;
+    if (error) return <SectionError name="Performa per Shift" message={error} />;
     if (!data.length) return <SectionEmpty message="Tidak ada data untuk periode ini" />;
-
-    // Untuk chart, urutkan berdasarkan total_transactions desc & temukan max untuk highlight.
-    const chartData = [...data].sort(
-        (a, b) => Number(b.total_transactions || 0) - Number(a.total_transactions || 0)
-    );
-    const maxTx = chartData.reduce(
-        (m, r) => Math.max(m, Number(r.total_transactions) || 0),
-        0
-    );
 
     return (
         <SectionCard
-            title="Okupansi per Lokasi Apartemen"
+            title="Performa per Shift"
             periodLabel={periodLabel}
-            subtitle="Jumlah unit (dari nomor_kamar), transaksi, pendapatan, dan rata-rata occupancy harian."
+            subtitle="Jumlah transaksi dan pendapatan per shift kerja."
             onExport={exportCsv}
             isExporting={isExporting}
-        >
-            {/* Bar chart horizontal — sumbu Y nama lokasi, sumbu X jumlah transaksi */}
-            <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 36)}>
-                <BarChart
-                    data={chartData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 24, left: 8, bottom: 4 }}
-                >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                    <YAxis
-                        dataKey="apartment_location"
-                        type="category"
-                        width={140}
-                        tick={{ fontSize: 12 }}
-                    />
-                    <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
+    >
+            <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={data} margin={{ top: 4, right: 24, left: 8, bottom: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="shift" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                     <Tooltip
                         formatter={(value) => [value, 'Jumlah Transaksi']}
-                        labelFormatter={(label) => `Lokasi: ${label}`}
+                        labelFormatter={(label) => `Shift: ${label}`}
                     />
-                    <Bar dataKey="total_transactions" radius={[0, 4, 4, 0]}>
-                        {chartData.map((row, idx) => (
+                    <Bar dataKey="total_transactions" radius={[4, 4, 0, 0]}>
+                        {data.map((row, idx) => (
                             <Cell
                                 key={`cell-${idx}`}
-                                fill={
-                                    maxTx > 0 && Number(row.total_transactions) === maxTx
-                                        ? HIGHLIGHT_COLOR
-                                        : BAR_COLOR
-                                }
+                                fill={SHIFT_COLORS[row.shift] ?? DEFAULT_COLOR}
                             />
                         ))}
                     </Bar>
@@ -116,17 +98,10 @@ function OccupancyByLocationSection({ filter }) {
                     <thead>
                         <tr className="border-b border-gray-200 text-gray-500 text-xs uppercase tracking-wide">
                             <SortableHeader
-                                label="Lokasi"
-                                sortKey="apartment_location"
+                                label="Shift"
+                                sortKey="shift"
                                 onSort={requestSort}
                                 getSortIcon={getSortIcon}
-                            />
-                            <SortableHeader
-                                label="Total Unit"
-                                sortKey="total_rooms"
-                                onSort={requestSort}
-                                getSortIcon={getSortIcon}
-                                align="right"
                             />
                             <SortableHeader
                                 label="Jumlah Transaksi"
@@ -143,8 +118,15 @@ function OccupancyByLocationSection({ filter }) {
                                 align="right"
                             />
                             <SortableHeader
-                                label="Occupancy Rate"
-                                sortKey="occupancy_rate"
+                                label="Rata-rata per Transaksi"
+                                sortKey="avg_revenue_per_transaction"
+                                onSort={requestSort}
+                                getSortIcon={getSortIcon}
+                                align="right"
+                            />
+                            <SortableHeader
+                                label="Persentase"
+                                sortKey="percentage"
                                 onSort={requestSort}
                                 getSortIcon={getSortIcon}
                                 align="right"
@@ -154,17 +136,21 @@ function OccupancyByLocationSection({ filter }) {
                     <tbody>
                         {sortedData.map((row, idx) => (
                             <tr
-                                key={`${row.apartment_location}-${idx}`}
+                                key={`${row.shift}-${idx}`}
                                 className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
                             >
-                                <td className="py-2 pr-4 font-medium text-gray-800">{row.apartment_location}</td>
-                                <td className="py-2 pr-4 text-right text-gray-800">{row.total_rooms ?? 0}</td>
-                                <td className="py-2 pr-4 text-right text-gray-800">{row.total_transactions}</td>
+                                <td className="py-2 pr-4 font-medium text-gray-800">{row.shift}</td>
+                                <td className="py-2 pr-4 text-right text-gray-800">
+                                    {row.total_transactions}
+                                </td>
                                 <td className="py-2 pr-4 text-right text-gray-800">
                                     {formatRupiah(row.total_revenue)}
                                 </td>
+                                <td className="py-2 pr-4 text-right text-gray-800">
+                                    {formatRupiah(row.avg_revenue_per_transaction)}
+                                </td>
                                 <td className="py-2 text-right text-gray-800">
-                                    {formatPersen(row.occupancy_rate)}
+                                    {formatPersen(row.percentage)}
                                 </td>
                             </tr>
                         ))}
@@ -175,4 +161,4 @@ function OccupancyByLocationSection({ filter }) {
     );
 }
 
-export default OccupancyByLocationSection;
+export default ShiftPerformanceSection;

@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatPersen } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -26,7 +27,7 @@ function LocationFullnessSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, isLoading, error } = useRpcQuery({
+  const { data, isLoading, error, fetchAll } = useRpcQuery({
     rpcName: 'get_location_fullness',
     params: {
       p_start_date: startDate,
@@ -37,6 +38,18 @@ function LocationFullnessSection({ filter }) {
   });
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `lokasi-sering-penuh_${startDate}_${endDate}`,
+    columns: [
+      { key: 'apartment_location', label: 'Lokasi' },
+      { key: 'total_rooms', label: 'Total Kamar' },
+      { key: 'avg_occupancy_rate', label: 'Rata-rata Occupancy (%)' },
+      { key: 'peak_occupancy_rate', label: 'Peak Occupancy (%)' },
+      { key: 'total_transactions', label: 'Total Transaksi' },
+    ],
+  });
 
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Lokasi Sering Penuh" message={error} />;
@@ -49,6 +62,8 @@ function LocationFullnessSection({ filter }) {
       title="Lokasi Sering Penuh"
       periodLabel={periodLabel}
       subtitle="Rata-rata occupancy harian dan persentase hari semua kamar terisi (peak)."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {chartData.length > 0 && (
         <ResponsiveContainer width="100%" height={280}>

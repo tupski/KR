@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import * as fc from 'fast-check';
-import { useRpcQuery } from './useRpcQuery';
+import { useRpcQuery, clearRpcCache } from './useRpcQuery';
 
 // Mock the supabase client module
 vi.mock('@/lib/customSupabaseClient', () => {
@@ -31,6 +31,7 @@ const LARGE_TOTAL_COUNT = 10000;
 describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke RPC', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearRpcCache();
     supabase.rpc.mockResolvedValue({
       data: [{ total_count: LARGE_TOTAL_COUNT }],
       error: null,
@@ -54,6 +55,7 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
           fc.integer({ min: 1, max: 100 }), // pageSize
           async (page, pageSize) => {
             vi.clearAllMocks();
+            clearRpcCache();
             supabase.rpc.mockResolvedValue({
               data: [{ total_count: LARGE_TOTAL_COUNT }],
               error: null,
@@ -131,6 +133,7 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
 describe('useRpcQuery — Property 8: Filter params diteruskan ke RPC dengan benar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearRpcCache();
     supabase.rpc.mockResolvedValue({
       data: [],
       error: null,
@@ -158,6 +161,7 @@ describe('useRpcQuery — Property 8: Filter params diteruskan ke RPC dengan ben
           }),
           async ({ p_start_date, p_end_date, p_location }) => {
             vi.clearAllMocks();
+            clearRpcCache();
             supabase.rpc.mockResolvedValue({
               data: [],
               error: null,

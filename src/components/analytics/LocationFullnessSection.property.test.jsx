@@ -31,6 +31,7 @@ vi.mock('@/components/PaginationControls', () => ({ default: () => null }));
 // Import component AFTER mocks are set up.
 import LocationFullnessSection from './LocationFullnessSection';
 import { supabase } from '@/lib/customSupabaseClient';
+import { clearRpcCache } from '@/hooks/useRpcQuery';
 
 const FILTER = {
   startDate: '2024-01-01',
@@ -78,6 +79,7 @@ describe('LocationFullnessSection — Property 12: Occupancy rate NULL untuk lok
           ),
           async (rows) => {
             vi.clearAllMocks();
+            clearRpcCache();
             supabase.rpc.mockResolvedValue({ data: rows, error: null });
 
             const { container, unmount } = render(

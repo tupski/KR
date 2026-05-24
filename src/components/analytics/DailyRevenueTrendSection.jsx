@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatTanggal } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -60,7 +61,7 @@ function DailyRevenueTrendSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage } = useRpcQuery({
+  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage, fetchAll } = useRpcQuery({
     rpcName: 'get_daily_revenue_trend',
     params: {
       p_start_date: startDate,
@@ -72,6 +73,17 @@ function DailyRevenueTrendSection({ filter }) {
   });
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `tren-pendapatan-harian_${startDate}_${endDate}`,
+    columns: [
+      { key: 'transaction_date', label: 'Tanggal' },
+      { key: 'total_revenue', label: 'Total Pendapatan' },
+      { key: 'transaction_count', label: 'Jumlah Transaksi' },
+      { key: 'avg_revenue_per_transaction', label: 'Rata-rata per Transaksi' },
+    ],
+  });
 
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Tren Pendapatan Harian" message={error} />;
@@ -86,6 +98,8 @@ function DailyRevenueTrendSection({ filter }) {
       title="Tren Pendapatan Harian"
       periodLabel={periodLabel}
       subtitle="Pendapatan harian (10 hari per halaman tabel)."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {/* Bar chart vertikal */}
       <ResponsiveContainer width="100%" height={300}>

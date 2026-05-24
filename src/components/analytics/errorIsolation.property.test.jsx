@@ -64,6 +64,7 @@ vi.mock('recharts', () => {
 });
 
 import { supabase } from '@/lib/customSupabaseClient';
+import { clearRpcCache } from '@/hooks/useRpcQuery';
 import OccupancyByLocationSection from './OccupancyByLocationSection';
 import ProfitSection from './ProfitSection';
 import CheckinHeatmapSection from './CheckinHeatmapSection';
@@ -185,6 +186,7 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
           fc.subarray(RPC_NAMES, { minLength: 1, maxLength: RPC_NAMES.length }),
           async (failingRpcs) => {
             const failingSet = new Set(failingRpcs);
+            clearRpcCache();
 
             // Configure the supabase.rpc mock for this iteration.
             supabase.rpc.mockImplementation((rpcName) => {

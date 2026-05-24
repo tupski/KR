@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatTanggal } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -26,7 +27,7 @@ function RepeatGuestSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage } = useRpcQuery({
+  const { data, totalCount, totalPages, currentPage, isLoading, error, setPage, fetchAll } = useRpcQuery({
     rpcName: 'get_repeat_guests',
     params: {
       p_start_date: startDate,
@@ -39,6 +40,18 @@ function RepeatGuestSection({ filter }) {
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
 
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `repeat-guest_${startDate}_${endDate}`,
+    columns: [
+      { key: 'customer_name', label: 'Nama Tamu' },
+      { key: 'visit_count', label: 'Jumlah Kunjungan' },
+      { key: 'total_revenue', label: 'Total Pendapatan' },
+      { key: 'first_visit', label: 'Kunjungan Pertama' },
+      { key: 'last_visit', label: 'Kunjungan Terakhir' },
+    ],
+  });
+
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Repeat Guest" message={error} />;
   if (!data.length) return <SectionEmpty message="Tidak ada repeat guest untuk periode ini" />;
@@ -50,6 +63,8 @@ function RepeatGuestSection({ filter }) {
       title="Repeat Guest"
       periodLabel={periodLabel}
       subtitle="Tamu dengan ≥ 2 kunjungan dalam periode ini. 10 per halaman."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {/* Bar chart horizontal */}
       <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 32)}>

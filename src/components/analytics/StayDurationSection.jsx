@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
 import { useSortableData } from '@/hooks/useSortableData';
+import { useSectionCsvExport } from '@/hooks/useSectionCsvExport';
 import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatPersen } from '@/utils/analyticsFormatters';
 import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
@@ -48,7 +49,7 @@ function StayDurationSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
   const periodLabel = formatPeriodLabel(startDate, endDate);
 
-  const { data, isLoading, error } = useRpcQuery({
+  const { data, isLoading, error, fetchAll } = useRpcQuery({
     rpcName: 'get_stay_duration_summary',
     params: {
       p_start_date: startDate,
@@ -59,6 +60,17 @@ function StayDurationSection({ filter }) {
   });
 
   const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
+  const { exportCsv, isExporting } = useSectionCsvExport({
+    fetchAll,
+    filename: `durasi-menginap_${startDate}_${endDate}`,
+    columns: [
+      { key: 'duration_category', label: 'Kategori' },
+      { key: 'transaction_count', label: 'Jumlah Transaksi' },
+      { key: 'percentage', label: 'Persentase (%)' },
+      { key: 'total_revenue', label: 'Total Pendapatan' },
+    ],
+  });
 
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Durasi Menginap" message={error} />;
@@ -72,6 +84,8 @@ function StayDurationSection({ filter }) {
       title="Durasi Menginap"
       periodLabel={periodLabel}
       subtitle="Setiap durasi transit (1–11 jam) dipaparkan terpisah, lalu fullday dan per malam."
+      onExport={exportCsv}
+      isExporting={isExporting}
     >
       {/* Bar chart vertikal */}
       <ResponsiveContainer width="100%" height={320}>
