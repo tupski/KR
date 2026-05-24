@@ -1,7 +1,7 @@
 import React from 'react';
 import {
-  LineChart,
-  Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -9,14 +9,21 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
-import { SectionCard, SectionSkeleton, SectionError, SectionEmpty } from './shared';
+import { useSortableData } from '@/hooks/useSortableData';
+import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatTanggal } from '@/utils/analyticsFormatters';
+import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
 import PaginationControls from '@/components/PaginationControls';
 
+const compactRupiah = (value) =>
+  new Intl.NumberFormat('id-ID', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+  }).format(value ?? 0);
+
 /**
- * Tooltip kustom untuk line chart Tren Pendapatan Harian.
- * Menampilkan tanggal (`formatTanggal`), total pendapatan (`formatRupiah`),
- * dan jumlah transaksi.
+ * Tooltip kustom untuk bar chart Tren Pendapatan Harian.
  */
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
@@ -44,13 +51,14 @@ function CustomTooltip({ active, payload, label }) {
 /**
  * DailyRevenueTrendSection — Laporan Tren Pendapatan Harian
  *
- * Menampilkan line chart tren pendapatan harian dan tabel ringkasan per hari
- * berdasarkan filter tanggal dan lokasi.
+ * Bar chart pendapatan harian + tabel sortable. Line chart diganti dengan
+ * batang sesuai permintaan.
  *
  * @param {{ filter: { startDate: string, endDate: string, location: string|null } }} props
  */
 function DailyRevenueTrendSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
+  const periodLabel = formatPeriodLabel(startDate, endDate);
 
   const { data, totalCount, totalPages, currentPage, isLoading, error, setPage } = useRpcQuery({
     rpcName: 'get_daily_revenue_trend',
@@ -63,62 +71,83 @@ function DailyRevenueTrendSection({ filter }) {
     paginated: true,
   });
 
+  const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Tren Pendapatan Harian" message={error} />;
   if (!data.length) return <SectionEmpty message="Tidak ada data untuk periode ini" />;
 
-  // RPC mengurutkan DESC (terbaru → terlama). Untuk line chart, lebih baik
-  // ditampilkan ASC (kiri = lebih lama, kanan = lebih baru).
+  // RPC mengurutkan DESC (terbaru → terlama). Untuk chart, balik ASC supaya
+  // sumbu X kiri = lebih lama dan kanan = lebih baru (intuitif untuk tren).
   const chartData = [...data].reverse();
 
   return (
-    <SectionCard title="Tren Pendapatan Harian">
-      {/* Line chart */}
+    <SectionCard
+      title="Tren Pendapatan Harian"
+      periodLabel={periodLabel}
+      subtitle="Pendapatan harian (10 hari per halaman tabel)."
+    >
+      {/* Bar chart vertikal */}
       <ResponsiveContainer width="100%" height={300}>
-        <LineChart
+        <BarChart
           data={chartData}
-          margin={{ top: 8, right: 24, left: 8, bottom: 4 }}
+          margin={{ top: 8, right: 24, left: 8, bottom: 40 }}
         >
-          <CartesianGrid strokeDasharray="3 3" />
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="transaction_date"
-            tick={{ fontSize: 12 }}
+            tick={{ fontSize: 11 }}
             tickFormatter={(value) => formatTanggal(value)}
+            angle={-35}
+            textAnchor="end"
+            interval={chartData.length > 14 ? 'preserveStartEnd' : 0}
+            height={50}
           />
           <YAxis
             tick={{ fontSize: 12 }}
-            tickFormatter={(value) =>
-              new Intl.NumberFormat('id-ID', {
-                notation: 'compact',
-                compactDisplay: 'short',
-              }).format(value ?? 0)
-            }
+            tickFormatter={compactRupiah}
           />
           <Tooltip content={<CustomTooltip />} />
-          <Line
-            type="monotone"
-            dataKey="total_revenue"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            dot={{ r: 3 }}
-            activeDot={{ r: 5 }}
-          />
-        </LineChart>
+          <Bar dataKey="total_revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        </BarChart>
       </ResponsiveContainer>
 
-      {/* Tabel */}
+      {/* Tabel sortable */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead>
             <tr className="border-b border-gray-200 text-gray-500 text-xs uppercase tracking-wide">
-              <th className="py-2 pr-4 font-semibold">Tanggal</th>
-              <th className="py-2 pr-4 font-semibold text-right">Total Pendapatan</th>
-              <th className="py-2 pr-4 font-semibold text-right">Jumlah Transaksi</th>
-              <th className="py-2 font-semibold text-right">Rata-rata per Transaksi</th>
+              <SortableHeader
+                label="Tanggal"
+                sortKey="transaction_date"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
+              <SortableHeader
+                label="Total Pendapatan"
+                sortKey="total_revenue"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Jumlah Transaksi"
+                sortKey="transaction_count"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Rata-rata per Transaksi"
+                sortKey="avg_revenue_per_transaction"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
             </tr>
           </thead>
           <tbody>
-            {data.map((row, idx) => (
+            {sortedData.map((row, idx) => (
               <tr
                 key={`${row.transaction_date}-${idx}`}
                 className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
@@ -141,7 +170,6 @@ function DailyRevenueTrendSection({ filter }) {
         </table>
       </div>
 
-      {/* Pagination */}
       <PaginationControls
         currentPage={currentPage}
         totalPages={totalPages}

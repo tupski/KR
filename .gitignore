@@ -85,3 +85,6 @@ Rencana Perombakan Form Transaksi Karyawan.md
 # Supabase CLI temp
 # =============================================================
 supabase/.temp/
+
+# Others
+**/backup/*

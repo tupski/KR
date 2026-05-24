@@ -64,7 +64,7 @@ vi.mock('recharts', () => {
 });
 
 import { supabase } from '@/lib/customSupabaseClient';
-import OccupancySection from './OccupancySection';
+import OccupancyByLocationSection from './OccupancyByLocationSection';
 import ProfitSection from './ProfitSection';
 import CheckinHeatmapSection from './CheckinHeatmapSection';
 import GuestSourceSection from './GuestSourceSection';
@@ -78,9 +78,9 @@ import DailyRevenueTrendSection from './DailyRevenueTrendSection';
 // ---------------------------------------------------------------------------
 const SECTIONS = [
   {
-    rpcName: 'get_occupancy_per_unit',
-    Component: OccupancySection,
-    displayName: 'Okupansi per Unit',
+    rpcName: 'get_occupancy_per_location',
+    Component: OccupancyByLocationSection,
+    displayName: 'Okupansi per Lokasi Apartemen',
   },
   {
     rpcName: 'get_profit_per_location',

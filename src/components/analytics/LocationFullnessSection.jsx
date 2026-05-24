@@ -9,20 +9,22 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
-import { SectionCard, SectionSkeleton, SectionError, SectionEmpty } from './shared';
+import { useSortableData } from '@/hooks/useSortableData';
+import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatPersen } from '@/utils/analyticsFormatters';
+import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
 
 /**
  * LocationFullnessSection — Laporan Lokasi Apartemen yang Sering Penuh
  *
- * Menampilkan bar chart vertikal avg_occupancy_rate per lokasi dan tabel
- * dengan detail occupancy rate, peak occupancy rate, dan total transaksi.
- * Lokasi dengan total_rooms = 0 atau NULL akan menampilkan "-" pada kolom occupancy rate.
+ * Bar chart vertikal avg_occupancy_rate per lokasi + tabel sortable. Lokasi
+ * tanpa total_rooms (0/NULL) menampilkan "-" pada kolom occupancy rate.
  *
- * @param {{ startDate: string, endDate: string, location: string|null }} filter
+ * @param {{ filter: { startDate: string, endDate: string, location: string|null } }} props
  */
 function LocationFullnessSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
+  const periodLabel = formatPeriodLabel(startDate, endDate);
 
   const { data, isLoading, error } = useRpcQuery({
     rpcName: 'get_location_fullness',
@@ -34,30 +36,34 @@ function LocationFullnessSection({ filter }) {
     paginated: false,
   });
 
+  const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Lokasi Sering Penuh" message={error} />;
   if (!data.length) return <SectionEmpty message="Tidak ada data untuk periode ini" />;
 
-  // Data sudah diurutkan dari RPC (avg_occupancy_rate DESC NULLS LAST).
-  // Untuk chart, hanya tampilkan baris dengan avg_occupancy_rate non-null.
   const chartData = data.filter((row) => row.avg_occupancy_rate != null);
 
   return (
-    <SectionCard title="Lokasi Sering Penuh">
-      {/* Bar chart vertikal — sumbu X nama lokasi, sumbu Y avg_occupancy_rate (%) */}
+    <SectionCard
+      title="Lokasi Sering Penuh"
+      periodLabel={periodLabel}
+      subtitle="Rata-rata occupancy harian dan persentase hari semua kamar terisi (peak)."
+    >
       {chartData.length > 0 && (
         <ResponsiveContainer width="100%" height={280}>
           <BarChart
             data={chartData}
-            margin={{ top: 4, right: 24, left: 8, bottom: 40 }}
+            margin={{ top: 4, right: 24, left: 8, bottom: 50 }}
           >
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="apartment_location"
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 11 }}
               angle={-30}
               textAnchor="end"
               interval={0}
+              height={60}
             />
             <YAxis
               tick={{ fontSize: 12 }}
@@ -73,20 +79,48 @@ function LocationFullnessSection({ filter }) {
         </ResponsiveContainer>
       )}
 
-      {/* Tabel */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead>
             <tr className="border-b border-gray-200 text-gray-500 text-xs uppercase tracking-wide">
-              <th className="py-2 pr-4 font-semibold">Lokasi</th>
-              <th className="py-2 pr-4 font-semibold text-right">Total Kamar</th>
-              <th className="py-2 pr-4 font-semibold text-right">Rata-rata Occupancy Rate</th>
-              <th className="py-2 pr-4 font-semibold text-right">Peak Occupancy Rate</th>
-              <th className="py-2 font-semibold text-right">Total Transaksi</th>
+              <SortableHeader
+                label="Lokasi"
+                sortKey="apartment_location"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
+              <SortableHeader
+                label="Total Kamar"
+                sortKey="total_rooms"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Rata-rata Occupancy Rate"
+                sortKey="avg_occupancy_rate"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Peak Occupancy Rate"
+                sortKey="peak_occupancy_rate"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Total Transaksi"
+                sortKey="total_transactions"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
             </tr>
           </thead>
           <tbody>
-            {data.map((row, idx) => (
+            {sortedData.map((row, idx) => (
               <tr
                 key={`${row.apartment_location}-${idx}`}
                 className="border-b border-gray-100 hover:bg-gray-50 transition-colors"

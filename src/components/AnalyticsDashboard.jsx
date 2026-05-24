@@ -12,7 +12,7 @@ import {
 } from 'date-fns';
 import { supabase } from '@/lib/customSupabaseClient';
 
-import OccupancySection from './analytics/OccupancySection';
+import OccupancyByLocationSection from './analytics/OccupancyByLocationSection';
 import ProfitSection from './analytics/ProfitSection';
 import CheckinHeatmapSection from './analytics/CheckinHeatmapSection';
 import GuestSourceSection from './analytics/GuestSourceSection';
@@ -269,7 +269,7 @@ const AnalyticsDashboard = () => {
             Lokasi Sering Penuh, Durasi Menginap, Tren Pendapatan Harian
         ---------------------------------------------------------------- */}
 
-        <OccupancySection filter={appliedFilter} />
+        <OccupancyByLocationSection filter={appliedFilter} />
         <ProfitSection filter={appliedFilter} />
         <CheckinHeatmapSection filter={appliedFilter} />
         <GuestSourceSection filter={appliedFilter} />

@@ -1,15 +1,76 @@
 import React from 'react';
+import { Calendar } from 'lucide-react';
 
 /**
- * SectionCard — wrapper card dengan judul untuk setiap section analytics.
+ * SectionCard — wrapper card dengan judul + label periode untuk setiap section.
  * Styling konsisten dengan glassmorphic-card yang digunakan di seluruh proyek.
+ *
+ * @param {object} props
+ * @param {string} props.title - Judul section
+ * @param {string} [props.periodLabel] - Label periode ringkas (mis. "30 hari terakhir")
+ * @param {string} [props.subtitle] - Deskripsi singkat tambahan opsional
+ * @param {React.ReactNode} props.children
  */
-export function SectionCard({ title, children }) {
+export function SectionCard({ title, periodLabel, subtitle, children }) {
   return (
     <div className="glassmorphic-card p-5 space-y-4">
-      <h2 className="font-bold text-lg text-gray-800">{title}</h2>
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-bold text-lg text-gray-800">{title}</h2>
+          {periodLabel ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold whitespace-nowrap">
+              <Calendar className="w-3 h-3" />
+              {periodLabel}
+            </span>
+          ) : null}
+        </div>
+        {subtitle ? (
+          <p className="text-xs text-gray-500">{subtitle}</p>
+        ) : null}
+      </div>
       {children}
     </div>
+  );
+}
+
+/**
+ * SortableHeader — header kolom tabel yang bisa diklik untuk sortir A-Z / Z-A.
+ *
+ * @param {object} props
+ * @param {string} props.label - Label kolom
+ * @param {string} props.sortKey - Key data yang dipakai untuk sorting
+ * @param {(key: string) => void} props.onSort - Handler klik
+ * @param {(key: string) => string} props.getSortIcon - Mengembalikan '↑' | '↓' | '↕'
+ * @param {'left' | 'right'} [props.align='left'] - Alignment teks
+ * @param {string} [props.className] - Kelas tambahan
+ */
+export function SortableHeader({
+  label,
+  sortKey,
+  onSort,
+  getSortIcon,
+  align = 'left',
+  className = '',
+}) {
+  const icon = getSortIcon(sortKey);
+  const isActive = icon !== '↕';
+  const alignClass = align === 'right' ? 'text-right justify-end' : 'text-left justify-start';
+
+  return (
+    <th
+      className={`py-2 pr-4 font-semibold ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 ${alignClass} w-full select-none hover:text-blue-600 transition-colors ${isActive ? 'text-blue-700' : ''
+          }`}
+        aria-label={`Sortir ${label}`}
+      >
+        <span>{label}</span>
+        <span className={`text-[11px] ${isActive ? 'text-blue-700' : 'text-gray-400'}`}>{icon}</span>
+      </button>
+    </th>
   );
 }
 

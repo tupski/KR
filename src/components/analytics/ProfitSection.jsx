@@ -1,43 +1,42 @@
 import React from 'react';
 import {
-  PieChart,
-  Pie,
-  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
+  Cell,
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
-import { SectionCard, SectionSkeleton, SectionError, SectionEmpty } from './shared';
+import { useSortableData } from '@/hooks/useSortableData';
+import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah } from '@/utils/analyticsFormatters';
+import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
 
-/**
- * Color palette untuk slice pie chart Profit per Lokasi.
- * Dipilih agar kontras antar lokasi tetap jelas dan dicycle untuk lokasi >6.
- */
-const SLICE_COLORS = [
-  '#3b82f6', // blue-500
-  '#10b981', // emerald-500
-  '#f59e0b', // amber-500
-  '#ef4444', // red-500
-  '#8b5cf6', // violet-500
-  '#ec4899', // pink-500
-  '#14b8a6', // teal-500
-  '#f97316', // orange-500
-];
+const BAR_COLOR = '#10b981'; // emerald-500
+const HIGHLIGHT_COLOR = '#0ea5e9'; // sky-500
+
+const compactRupiah = (value) =>
+  new Intl.NumberFormat('id-ID', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+  }).format(value ?? 0);
 
 /**
  * ProfitSection — Laporan Profit per Lokasi
  *
- * Menampilkan pie chart total pendapatan per lokasi, ringkasan total keseluruhan
- * di atas tabel, dan tabel detail dengan total pendapatan, jumlah transaksi,
- * dan rata-rata per transaksi. Tidak menggunakan pagination (RPC mengembalikan
- * seluruh hasil agregat per lokasi sekaligus).
+ * Menampilkan bar chart horizontal total pendapatan per lokasi, ringkasan
+ * total keseluruhan, dan tabel sortable. Menggantikan pie chart yang sulit
+ * dibaca ketika jumlah lokasi banyak.
  *
  * @param {{ filter: { startDate: string, endDate: string, location: string|null } }} props
  */
 function ProfitSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
+  const periodLabel = formatPeriodLabel(startDate, endDate);
 
   const { data, isLoading, error } = useRpcQuery({
     rpcName: 'get_profit_per_location',
@@ -49,57 +48,72 @@ function ProfitSection({ filter }) {
     paginated: false,
   });
 
+  const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Profit per Lokasi" message={error} />;
   if (!data.length) return <SectionEmpty message="Tidak ada data untuk periode ini" />;
 
-  // Sort by total_revenue descending for both chart and table.
-  // Note: this is sorting an already-aggregated result set returned by the RPC
-  // (one row per lokasi, not raw transaction rows), which is allowed per AGENTS.md.
-  const sortedData = [...data].sort(
+  // Chart: urutan revenue desc, highlight top.
+  const chartData = [...data].sort(
     (a, b) => Number(b.total_revenue || 0) - Number(a.total_revenue || 0)
   );
+  const maxRevenue = chartData.reduce(
+    (m, r) => Math.max(m, Number(r.total_revenue) || 0),
+    0
+  );
 
-  // Grand total revenue across all locations. The RPC returns at most one row
-  // per location (capped at the number of distinct lokasi), so summing here is
-  // bounded and not equivalent to aggregating raw transaction rows.
-  const grandTotalRevenue = sortedData.reduce(
+  // Total keseluruhan dari result set yang sudah teragregasi (1 row/lokasi).
+  const grandTotalRevenue = chartData.reduce(
     (sum, d) => sum + Number(d.total_revenue || 0),
     0
   );
 
   return (
-    <SectionCard title="Profit per Lokasi">
-      {/* Pie chart total pendapatan per lokasi */}
-      <ResponsiveContainer width="100%" height={300}>
-        <PieChart>
-          <Pie
-            data={sortedData}
-            dataKey="total_revenue"
-            nameKey="apartment_location"
-            cx="50%"
-            cy="50%"
-            outerRadius={100}
-            label={({ apartment_location, total_revenue }) =>
-              `${apartment_location}: ${formatRupiah(total_revenue)}`
-            }
-            labelLine={false}
-          >
-            {sortedData.map((entry, idx) => (
-              <Cell
-                key={`slice-${entry.apartment_location}-${idx}`}
-                fill={SLICE_COLORS[idx % SLICE_COLORS.length]}
-              />
-            ))}
-          </Pie>
+    <SectionCard
+      title="Profit per Lokasi"
+      periodLabel={periodLabel}
+      subtitle="Total pendapatan dan rata-rata per transaksi setiap lokasi."
+    >
+      {/* Bar chart horizontal */}
+      <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 36)}>
+        <BarChart
+          data={chartData}
+          layout="vertical"
+          margin={{ top: 4, right: 32, left: 8, bottom: 4 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+          <YAxis
+            dataKey="apartment_location"
+            type="category"
+            width={140}
+            tick={{ fontSize: 12 }}
+          />
+          <XAxis
+            type="number"
+            tick={{ fontSize: 12 }}
+            tickFormatter={compactRupiah}
+          />
           <Tooltip
             formatter={(value) => [formatRupiah(value), 'Total Pendapatan']}
+            labelFormatter={(label) => `Lokasi: ${label}`}
           />
-          <Legend />
-        </PieChart>
+          <Bar dataKey="total_revenue" radius={[0, 4, 4, 0]}>
+            {chartData.map((row, idx) => (
+              <Cell
+                key={`cell-${idx}`}
+                fill={
+                  maxRevenue > 0 && Number(row.total_revenue) === maxRevenue
+                    ? HIGHLIGHT_COLOR
+                    : BAR_COLOR
+                }
+              />
+            ))}
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
 
-      {/* Ringkasan total keseluruhan pendapatan */}
+      {/* Ringkasan total */}
       <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 flex items-center justify-between">
         <span className="text-sm font-medium text-blue-900">
           Total Pendapatan Keseluruhan
@@ -109,15 +123,38 @@ function ProfitSection({ filter }) {
         </span>
       </div>
 
-      {/* Tabel */}
+      {/* Tabel sortable */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead>
             <tr className="border-b border-gray-200 text-gray-500 text-xs uppercase tracking-wide">
-              <th className="py-2 pr-4 font-semibold">Lokasi</th>
-              <th className="py-2 pr-4 font-semibold text-right">Total Pendapatan</th>
-              <th className="py-2 pr-4 font-semibold text-right">Jumlah Transaksi</th>
-              <th className="py-2 font-semibold text-right">Rata-rata per Transaksi</th>
+              <SortableHeader
+                label="Lokasi"
+                sortKey="apartment_location"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
+              <SortableHeader
+                label="Total Pendapatan"
+                sortKey="total_revenue"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Jumlah Transaksi"
+                sortKey="total_transactions"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Rata-rata per Transaksi"
+                sortKey="avg_revenue_per_transaction"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
             </tr>
           </thead>
           <tbody>

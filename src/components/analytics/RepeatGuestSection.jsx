@@ -9,27 +9,22 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { useRpcQuery } from '@/hooks/useRpcQuery';
-import { SectionCard, SectionSkeleton, SectionError, SectionEmpty } from './shared';
+import { useSortableData } from '@/hooks/useSortableData';
+import { SectionCard, SectionSkeleton, SectionError, SectionEmpty, SortableHeader } from './shared';
 import { formatRupiah, formatTanggal } from '@/utils/analyticsFormatters';
+import { formatPeriodLabel } from '@/utils/analyticsPeriodLabel';
 import PaginationControls from '@/components/PaginationControls';
 
 /**
  * RepeatGuestSection — Laporan Repeat Guest
  *
- * Menampilkan bar chart horizontal repeat guest (max 20 teratas) dan tabel
- * dengan detail jumlah kunjungan, total pendapatan, kunjungan pertama,
- * dan kunjungan terakhir.
+ * Bar chart horizontal repeat guest (halaman aktif) + tabel sortable.
  *
- * Catatan: Data diambil paginated dari RPC dengan pageSize=10 (sudah diurutkan
- * `visit_count` DESC oleh server). Chart merender data halaman aktif dengan
- * batas atas 20 entri (termasuk tie pada posisi ke-20). Karena `pageSize = 10`,
- * batas tersebut tidak akan tercapai dalam praktik, namun logika dipertahankan
- * agar konsisten dengan spesifikasi.
- *
- * @param {{ startDate: string, endDate: string, location: string|null }} filter
+ * @param {{ filter: { startDate: string, endDate: string, location: string|null } }} props
  */
 function RepeatGuestSection({ filter }) {
   const { startDate, endDate, location } = filter ?? {};
+  const periodLabel = formatPeriodLabel(startDate, endDate);
 
   const { data, totalCount, totalPages, currentPage, isLoading, error, setPage } = useRpcQuery({
     rpcName: 'get_repeat_guests',
@@ -42,27 +37,22 @@ function RepeatGuestSection({ filter }) {
     paginated: true,
   });
 
+  const { sortedData, requestSort, getSortIcon } = useSortableData(data);
+
   if (isLoading) return <SectionSkeleton />;
   if (error) return <SectionError name="Repeat Guest" message={error} />;
   if (!data.length) return <SectionEmpty message="Tidak ada repeat guest untuk periode ini" />;
 
-  // Sort data DESC by visit_count for chart, slice to top 20 (with tie at 20).
-  // Server already returns DESC by visit_count, but we re-sort defensively.
-  const sortedData = [...data].sort((a, b) => b.visit_count - a.visit_count);
-
-  // Determine threshold visit_count at position 20 to keep ties at the cutoff.
-  let chartData;
-  if (sortedData.length <= 20) {
-    chartData = sortedData;
-  } else {
-    const thresholdCount = sortedData[19].visit_count;
-    chartData = sortedData.filter((row) => row.visit_count >= thresholdCount);
-  }
+  const chartData = [...data].sort((a, b) => b.visit_count - a.visit_count);
 
   return (
-    <SectionCard title="Repeat Guest">
-      {/* Bar chart horizontal — sumbu Y nama tamu, sumbu X jumlah kunjungan */}
-      <ResponsiveContainer width="100%" height={Math.max(240, chartData.length * 28)}>
+    <SectionCard
+      title="Repeat Guest"
+      periodLabel={periodLabel}
+      subtitle="Tamu dengan ≥ 2 kunjungan dalam periode ini. 10 per halaman."
+    >
+      {/* Bar chart horizontal */}
+      <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 32)}>
         <BarChart
           data={chartData}
           layout="vertical"
@@ -72,7 +62,7 @@ function RepeatGuestSection({ filter }) {
           <YAxis
             dataKey="customer_name"
             type="category"
-            width={120}
+            width={130}
             tick={{ fontSize: 12 }}
           />
           <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -84,20 +74,47 @@ function RepeatGuestSection({ filter }) {
         </BarChart>
       </ResponsiveContainer>
 
-      {/* Tabel */}
+      {/* Tabel sortable */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead>
             <tr className="border-b border-gray-200 text-gray-500 text-xs uppercase tracking-wide">
-              <th className="py-2 pr-4 font-semibold">Nama Tamu</th>
-              <th className="py-2 pr-4 font-semibold text-right">Jumlah Kunjungan</th>
-              <th className="py-2 pr-4 font-semibold text-right">Total Pendapatan</th>
-              <th className="py-2 pr-4 font-semibold">Kunjungan Pertama</th>
-              <th className="py-2 font-semibold">Kunjungan Terakhir</th>
+              <SortableHeader
+                label="Nama Tamu"
+                sortKey="customer_name"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
+              <SortableHeader
+                label="Jumlah Kunjungan"
+                sortKey="visit_count"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Total Pendapatan"
+                sortKey="total_revenue"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+                align="right"
+              />
+              <SortableHeader
+                label="Kunjungan Pertama"
+                sortKey="first_visit"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
+              <SortableHeader
+                label="Kunjungan Terakhir"
+                sortKey="last_visit"
+                onSort={requestSort}
+                getSortIcon={getSortIcon}
+              />
             </tr>
           </thead>
           <tbody>
-            {data.map((row, idx) => (
+            {sortedData.map((row, idx) => (
               <tr
                 key={`${row.customer_name}-${idx}`}
                 className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
@@ -115,7 +132,6 @@ function RepeatGuestSection({ filter }) {
         </table>
       </div>
 
-      {/* Pagination */}
       <PaginationControls
         currentPage={currentPage}
         totalPages={totalPages}
