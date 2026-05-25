@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, PlusCircle, Calendar, CheckCircle, History, ChevronDown, ChevronRight, Eye, Share2, Trash2, Coins, Search, Download, Building2, DoorOpen, Tag, AlertCircle, Pencil, Repeat } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -8,7 +8,7 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { resolveStorageUrl } from '@/lib/storageUrl';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { addDays, addMonths, format, endOfMonth, startOfDay, startOfMonth, subDays } from 'date-fns';
+import { addDays, addMonths, format, endOfMonth, startOfDay, startOfMonth, subDays, subMonths } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import PaginationControls from '@/components/PaginationControls';
 import TrendBreakdownChart from '@/components/TrendBreakdownChart';
@@ -169,14 +169,66 @@ const TagihanBulanan = ({ onDataUpdate }) => {
   const [selectedTagihan, setSelectedTagihan] = useState(null);
   const [showHistory, setShowHistory] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeUnitTab, setActiveUnitTab] = useState('aktif'); // 'aktif' | 'lunas'
+  const [unpaidMonthFilter, setUnpaidMonthFilter] = useState('all'); // 'all' | 'this' | 'next'
+  const [paidMonthFilter, setPaidMonthFilter] = useState('all'); // 'all' | 'this' | 'prev'
   // Edit
   const [editingTagihan, setEditingTagihan] = useState(null); // row sedang diedit
   const [editForm, setEditForm] = useState({ apartment_location: '', room_number: '', amount: '', due_date: '', is_recurring: true });
   const [editSuccessOpen, setEditSuccessOpen] = useState(false);
 
+  // Helper: nama bulan untuk label chip filter
+  const monthLabels = useMemo(() => {
+    const now = new Date();
+    return {
+      thisMonthName: format(now, 'MMM', { locale: idLocale }),
+      nextMonthName: format(addMonths(now, 1), 'MMM', { locale: idLocale }),
+      prevMonthName: format(subMonths(now, 1), 'MMM', { locale: idLocale }),
+    };
+  }, []);
+
+  // Hitung range due_date untuk filter tagihan aktif (berdasarkan due_date)
+  const unpaidDateRange = useMemo(() => {
+    const now = new Date();
+    if (unpaidMonthFilter === 'this') {
+      return { from: format(startOfMonth(now), 'yyyy-MM-dd'), to: format(endOfMonth(now), 'yyyy-MM-dd') };
+    }
+    if (unpaidMonthFilter === 'next') {
+      const next = addMonths(now, 1);
+      return { from: format(startOfMonth(next), 'yyyy-MM-dd'), to: format(endOfMonth(next), 'yyyy-MM-dd') };
+    }
+    return null;
+  }, [unpaidMonthFilter]);
+
+  // Hitung range paid_at untuk filter riwayat lunas (berdasarkan paid_at)
+  const paidDateRange = useMemo(() => {
+    const now = new Date();
+    if (paidMonthFilter === 'this') {
+      return { from: format(startOfMonth(now), 'yyyy-MM-dd'), to: format(endOfMonth(now), 'yyyy-MM-dd') };
+    }
+    if (paidMonthFilter === 'prev') {
+      const prev = subMonths(now, 1);
+      return { from: format(startOfMonth(prev), 'yyyy-MM-dd'), to: format(endOfMonth(prev), 'yyyy-MM-dd') };
+    }
+    return null;
+  }, [paidMonthFilter]);
+
   // Stable filter objects — must be memoized to avoid infinite re-fetch loop
-  const unpaidFilters = useMemo(() => ({ status: { op: 'eq', value: 'unpaid' } }), []);
-  const paidFilters = useMemo(() => ({ status: { op: 'eq', value: 'paid' } }), []);
+  const unpaidFilters = useMemo(() => ({
+    status: { op: 'eq', value: 'unpaid' },
+    ...(unpaidDateRange ? {
+      due_date_from: { op: 'gte', value: unpaidDateRange.from, column: 'due_date' },
+      due_date_to: { op: 'lte', value: unpaidDateRange.to, column: 'due_date' },
+    } : {}),
+  }), [unpaidDateRange]);
+
+  const paidFilters = useMemo(() => ({
+    status: { op: 'eq', value: 'paid' },
+    ...(paidDateRange ? {
+      paid_at_from: { op: 'gte', value: `${paidDateRange.from}T00:00:00.000Z`, column: 'paid_at' },
+      paid_at_to: { op: 'lte', value: `${paidDateRange.to}T23:59:59.999Z`, column: 'paid_at' },
+    } : {}),
+  }), [paidDateRange]);
 
   // Server-side paginated queries
   const unpaidQuery = usePaginatedQuery({
@@ -368,6 +420,17 @@ const TagihanBulanan = ({ onDataUpdate }) => {
   const filteredKamarOptions = newTagihan.apartment_location ? tagihanKamarOptions.filter(k => k.lokasi === newTagihan.apartment_location) : [];
   const filteredEditKamarOptions = editForm.apartment_location ? tagihanKamarOptions.filter(k => k.lokasi === editForm.apartment_location) : [];
 
+  // Rooms that already have unpaid tagihan (to disable in the add form)
+  const existingUnpaidRooms = useMemo(() => {
+    const set = new Set();
+    (unpaidQuery.data || []).forEach(t => {
+      if (t.apartment_location && t.room_number) {
+        set.add(`${t.apartment_location}__${t.room_number}`);
+      }
+    });
+    return set;
+  }, [unpaidQuery.data]);
+
   return (
     <div className="space-y-5">
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
@@ -390,8 +453,14 @@ const TagihanBulanan = ({ onDataUpdate }) => {
               <label className="block text-sm font-semibold text-gray-700 mb-2">Nomor Kamar</label>
               <select value={newTagihan.room_number} onChange={(e) => handleInputChange('room_number', e.target.value)} className="w-full px-3 py-2.5 rounded-xl border-2 text-gray-900" disabled={!newTagihan.apartment_location}>
                 <option value="">Pilih Kamar</option>
-                {filteredKamarOptions.map((k, i) => <option key={i} value={k.name}>{k.name}</option>)}
+                {filteredKamarOptions.map((k, i) => {
+                  const alreadyAdded = existingUnpaidRooms.has(`${newTagihan.apartment_location}__${k.name}`);
+                  return <option key={i} value={k.name} disabled={alreadyAdded}>{k.name}{alreadyAdded ? ' (sudah ada tagihan)' : ''}</option>;
+                })}
               </select>
+              {newTagihan.room_number && existingUnpaidRooms.has(`${newTagihan.apartment_location}__${newTagihan.room_number}`) && (
+                <p className="mt-1 text-xs text-amber-600 font-medium">Kamar ini sudah memiliki tagihan aktif.</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Jumlah Tagihan</label>
@@ -418,129 +487,202 @@ const TagihanBulanan = ({ onDataUpdate }) => {
         </DialogContent>
       </Dialog>
 
-      <div className="glassmorphic-card p-5 space-y-4">
-        <h2 className="font-bold text-lg text-gray-800">Daftar Tagihan Aktif</h2>
-        {unpaidQuery.error && (
-          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{unpaidQuery.error}</span>
-          </div>
-        )}
-        {unpaidQuery.isLoading && (
-          <div className="flex justify-center py-8">
-            <Spinner className="w-6 h-6 text-blue-500" />
-          </div>
-        )}
-        {!unpaidQuery.isLoading && tagihanList.length === 0 ? (
-          <div className="text-center py-8">
-            <CheckCircle className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-500">Tidak ada tagihan aktif. 🎉</p>
-          </div>
-        ) : (
-          !unpaidQuery.isLoading && tagihanList.map(tagihan => {
-            const isOverdue = tagihan.diffDays < 0;
-            const isDueSoon = tagihan.diffDays >= 0 && tagihan.diffDays <= 7;
-            let statusClasses = 'bg-green-100 text-green-800';
-            if (isOverdue) statusClasses = 'bg-red-100 text-red-800';
-            else if (isDueSoon) statusClasses = 'bg-yellow-100 text-yellow-800';
-            return (
-              <motion.div key={tagihan.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white/50 p-4 rounded-2xl shadow-sm border relative">
-                <div className="absolute top-2 right-2 flex items-center gap-1">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-blue-600 hover:bg-blue-50"
-                    onClick={() => openEditDialog(tagihan)}
-                    aria-label="Edit tagihan"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 text-red-500" aria-label="Hapus tagihan"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Tagihan?</AlertDialogTitle><AlertDialogDescription>Tindakan ini tidak bisa dibatalkan.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(tagihan.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-                </div>
-                <h3 className="font-bold text-gray-900 pr-20">{tagihan.apartment_location} - Kamar {tagihan.room_number}</h3>
-                <p className="text-lg font-bold text-blue-600">{formatRupiah(tagihan.amount)}</p>
-                <div className="flex flex-wrap items-center gap-2 mt-2">
-                  <div className={`text-xs font-bold px-2 py-1 rounded-full ${statusClasses} inline-block`}>
-                    {isOverdue ? `Terlambat ${Math.abs(tagihan.diffDays)} hari` : `${tagihan.diffDays} hari lagi`}
-                  </div>
-                  {tagihan.is_recurring && (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-200">
-                      <Repeat className="w-3 h-3" /> Rutin Bulanan
-                    </span>
-                  )}
-                </div>
-                <div className="flex justify-between items-end mt-3 border-t pt-3">
-                  <p className="text-sm text-gray-600"><Calendar className="w-4 h-4 inline" /> {formatDate(tagihan.due_date)}</p>
-                  <AlertDialog><AlertDialogTrigger asChild><Button size="sm" className="bg-green-500" onClick={() => setSelectedTagihan(tagihan)}><CheckCircle className="mr-2 h-4 w-4" /> Lunas</Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Konfirmasi Lunas</AlertDialogTitle><AlertDialogDescription>Upload bukti bayar (opsional).</AlertDialogDescription></AlertDialogHeader><div className="py-2"><input type="file" onChange={(e) => setBuktiBayarFile(e.target.files[0])} className="w-full text-sm text-gray-700 file:text-blue-600" /></div>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel onClick={() => setSelectedTagihan(null)} disabled={isSubmitting}>Batal</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleMarkAsPaid} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700">
-                        {isSubmitting ? 'Memproses...' : 'Konfirmasi Lunas'}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent></AlertDialog>
-                </div>
-              </motion.div>
-            )
-          })
-        )}
-        <PaginationControls
-          currentPage={unpaidQuery.currentPage}
-          totalPages={unpaidQuery.totalPages}
-          onPageChange={unpaidQuery.setPage}
-          itemsPerPage={unpaidQuery.pageSize}
-          totalItems={unpaidQuery.totalItems}
-          onPageSizeChange={unpaidQuery.setPageSize}
-        />
+      {/* Tab Tagihan Aktif / Lunas */}
+      <div className="flex gap-1 p-1 rounded-2xl bg-slate-100">
+        <button
+          onClick={() => setActiveUnitTab('aktif')}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeUnitTab === 'aktif' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Tagihan Aktif
+          {unpaidQuery.totalItems > 0 && (
+            <span className={`ml-2 inline-flex items-center justify-center min-w-[1.3rem] h-5 rounded-full text-[10px] font-bold px-1 ${activeUnitTab === 'aktif' ? 'bg-blue-100 text-blue-700' : 'bg-slate-300 text-slate-600'}`}>
+              {unpaidQuery.totalItems}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveUnitTab('lunas')}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeUnitTab === 'lunas' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Lunas
+          {paidQuery.totalItems > 0 && (
+            <span className={`ml-2 inline-flex items-center justify-center min-w-[1.3rem] h-5 rounded-full text-[10px] font-bold px-1 ${activeUnitTab === 'lunas' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-300 text-slate-600'}`}>
+              {paidQuery.totalItems}
+            </span>
+          )}
+        </button>
       </div>
 
-      <div className="glassmorphic-card p-5 space-y-4">
-        <button onClick={() => setShowHistory(!showHistory)} className="w-full flex justify-between items-center p-1">
-          <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2"><History className="w-5 h-5" />Riwayat Lunas</h2>
-          <ChevronDown className={`w-5 h-5 transition-transform text-gray-800 ${showHistory ? 'rotate-180' : ''}`} />
-        </button>
-        {paidQuery.error && (
-          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{paidQuery.error}</span>
+      {activeUnitTab === 'aktif' && (
+        <div className="glassmorphic-card p-5 space-y-4">
+          {/* Filter bulan untuk Tagihan Aktif */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setUnpaidMonthFilter('all')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${unpaidMonthFilter === 'all' ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Semua
+            </button>
+            <button
+              type="button"
+              onClick={() => setUnpaidMonthFilter('this')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${unpaidMonthFilter === 'this' ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Bulan ini ({monthLabels.thisMonthName})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUnpaidMonthFilter('next')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${unpaidMonthFilter === 'next' ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Bulan {monthLabels.nextMonthName}
+            </button>
           </div>
-        )}
-        <AnimatePresence>
-          {showHistory && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-4 space-y-3 overflow-hidden">
-              {paidQuery.isLoading && (
-                <div className="flex justify-center py-8">
-                  <Spinner className="w-6 h-6 text-blue-500" />
-                </div>
-              )}
-              {!paidQuery.isLoading && paidList.length > 0 ? paidList.map(item => (
-                <motion.div key={item.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white/50 p-4 rounded-2xl relative">
-                  <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="absolute top-2 right-2 h-7 w-7 text-red-500"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Riwayat?</AlertDialogTitle><AlertDialogDescription>Data riwayat lunas ini akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(item.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-                  <p className="font-bold text-gray-900">{item.apartment_location} - {item.room_number}</p>
-                  <p className="text-blue-700 font-semibold">{formatRupiah(item.amount)}</p>
-                  <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
-                  <div className="flex justify-between items-center mt-2">
-                    {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" /> Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran tagihan bulanan.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt="Bukti bayar" className="rounded-lg" /></DialogContent></Dialog>)}
+
+          {unpaidQuery.error && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{unpaidQuery.error}</span>
+            </div>
+          )}
+          {unpaidQuery.isLoading && (
+            <div className="flex justify-center py-8">
+              <Spinner className="w-6 h-6 text-blue-500" />
+            </div>
+          )}
+          {!unpaidQuery.isLoading && tagihanList.length === 0 ? (
+            <div className="text-center py-8">
+              <CheckCircle className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-500">Tidak ada tagihan aktif. 🎉</p>
+            </div>
+          ) : (
+            !unpaidQuery.isLoading && tagihanList.map(tagihan => {
+              const isOverdue = tagihan.diffDays < 0;
+              const isDueToday = tagihan.diffDays === 0;
+              const isDueSoon = tagihan.diffDays > 0 && tagihan.diffDays <= 7;
+              let statusClasses = 'bg-green-100 text-green-800';
+              if (isOverdue) statusClasses = 'bg-red-100 text-red-800';
+              else if (isDueToday) statusClasses = 'bg-orange-100 text-orange-800';
+              else if (isDueSoon) statusClasses = 'bg-yellow-100 text-yellow-800';
+              const statusLabel = isOverdue ? `Terlambat ${Math.abs(tagihan.diffDays)} hari` : isDueToday ? 'Tempo hari ini' : `${tagihan.diffDays} hari lagi`;
+              return (
+                <motion.div key={tagihan.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white/50 p-4 rounded-2xl shadow-sm border relative">
+                  <div className="absolute top-2 right-2 flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                      onClick={() => openEditDialog(tagihan)}
+                      aria-label="Edit tagihan"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 text-red-500" aria-label="Hapus tagihan"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Tagihan?</AlertDialogTitle><AlertDialogDescription>Tindakan ini tidak bisa dibatalkan.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(tagihan.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                  </div>
+                  <h3 className="font-bold text-gray-900 pr-20">{tagihan.apartment_location} - Kamar {tagihan.room_number}</h3>
+                  <p className="text-lg font-bold text-blue-600">{formatRupiah(tagihan.amount)}</p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <div className={`text-xs font-bold px-2 py-1 rounded-full ${statusClasses} inline-block`}>
+                      {statusLabel}
+                    </div>
+                    {tagihan.is_recurring && (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-200">
+                        <Repeat className="w-3 h-3" /> Rutin Bulanan
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex justify-between items-end mt-3 border-t pt-3">
+                    <p className="text-sm text-gray-600"><Calendar className="w-4 h-4 inline" /> {formatDate(tagihan.due_date)}</p>
+                    <AlertDialog><AlertDialogTrigger asChild><Button size="sm" className="bg-green-500" onClick={() => setSelectedTagihan(tagihan)}><CheckCircle className="mr-2 h-4 w-4" /> Lunas</Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Konfirmasi Lunas</AlertDialogTitle><AlertDialogDescription>Upload bukti bayar (opsional).</AlertDialogDescription></AlertDialogHeader><div className="py-2"><input type="file" onChange={(e) => setBuktiBayarFile(e.target.files[0])} className="w-full text-sm text-gray-700 file:text-blue-600" /></div>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel onClick={() => setSelectedTagihan(null)} disabled={isSubmitting}>Batal</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleMarkAsPaid} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700">
+                          {isSubmitting ? 'Memproses...' : 'Konfirmasi Lunas'}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent></AlertDialog>
                   </div>
                 </motion.div>
-              )) : !paidQuery.isLoading && (
-                <div className="text-center py-8">
-                  <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-                  <p className="text-gray-500">Belum ada riwayat.</p>
-                </div>
-              )}
-            </motion.div>
+              )
+            })
           )}
-        </AnimatePresence>
-        <PaginationControls
-          currentPage={paidQuery.currentPage}
-          totalPages={paidQuery.totalPages}
-          onPageChange={paidQuery.setPage}
-          itemsPerPage={paidQuery.pageSize}
-          totalItems={paidQuery.totalItems}
-          onPageSizeChange={paidQuery.setPageSize}
-        />
-      </div>
+          <PaginationControls
+            currentPage={unpaidQuery.currentPage}
+            totalPages={unpaidQuery.totalPages}
+            onPageChange={unpaidQuery.setPage}
+            itemsPerPage={unpaidQuery.pageSize}
+            totalItems={unpaidQuery.totalItems}
+            onPageSizeChange={unpaidQuery.setPageSize}
+          />
+        </div>
+      )}
+
+      {activeUnitTab === 'lunas' && (
+        <div className="glassmorphic-card p-5 space-y-4">
+          {/* Filter bulan untuk Riwayat Lunas */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setPaidMonthFilter('all')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${paidMonthFilter === 'all' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Semua
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaidMonthFilter('this')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${paidMonthFilter === 'this' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Bulan ini ({monthLabels.thisMonthName})
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaidMonthFilter('prev')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${paidMonthFilter === 'prev' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              Bulan {monthLabels.prevMonthName}
+            </button>
+          </div>
+
+          {paidQuery.error && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{paidQuery.error}</span>
+            </div>
+          )}
+          {paidQuery.isLoading && (
+            <div className="flex justify-center py-8">
+              <Spinner className="w-6 h-6 text-blue-500" />
+            </div>
+          )}
+          {!paidQuery.isLoading && paidList.length === 0 && (
+            <div className="text-center py-8">
+              <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-500">Belum ada riwayat lunas.</p>
+            </div>
+          )}
+          {!paidQuery.isLoading && paidList.map(item => (
+            <motion.div key={item.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white/50 p-4 rounded-2xl relative">
+              <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="absolute top-2 right-2 h-7 w-7 text-red-500"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Riwayat?</AlertDialogTitle><AlertDialogDescription>Data riwayat lunas ini akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(item.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+              <p className="font-bold text-gray-900">{item.apartment_location} - {item.room_number}</p>
+              <p className="text-blue-700 font-semibold">{formatRupiah(item.amount)}</p>
+              <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
+              <div className="flex justify-between items-center mt-2">
+                {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" /> Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran tagihan bulanan.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt="Bukti bayar" className="rounded-lg" /></DialogContent></Dialog>)}
+              </div>
+            </motion.div>
+          ))}
+          <PaginationControls
+            currentPage={paidQuery.currentPage}
+            totalPages={paidQuery.totalPages}
+            onPageChange={paidQuery.setPage}
+            itemsPerPage={paidQuery.pageSize}
+            totalItems={paidQuery.totalItems}
+            onPageSizeChange={paidQuery.setPageSize}
+          />
+        </div>
+      )}
 
       {/* Edit Tagihan Dialog */}
       <Dialog open={!!editingTagihan} onOpenChange={(open) => { if (!open) setEditingTagihan(null); }}>
@@ -559,10 +701,11 @@ const TagihanBulanan = ({ onDataUpdate }) => {
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Nomor Kamar</label>
-              <select value={editForm.room_number} onChange={(e) => handleEditInputChange('room_number', e.target.value)} className="w-full px-3 py-2.5 rounded-xl border-2 text-gray-900" disabled={!editForm.apartment_location}>
+              <select value={editForm.room_number} onChange={(e) => handleEditInputChange('room_number', e.target.value)} className="w-full px-3 py-2.5 rounded-xl border-2 text-gray-900 disabled:bg-slate-100 disabled:text-slate-500 cursor-not-allowed" disabled>
                 <option value="">Pilih Kamar</option>
                 {filteredEditKamarOptions.map((k, i) => <option key={i} value={k.name}>{k.name}</option>)}
               </select>
+              <p className="mt-1 text-xs text-slate-500">Nomor kamar tidak bisa diubah. Hapus dan buat tagihan baru jika perlu ganti kamar.</p>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Jumlah Tagihan</label>
@@ -649,6 +792,7 @@ const TagihanFee = ({ onDataUpdate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   /** Urutan daftar marketing & transaksi per tanggal check-in */
   const [feeDateOrder, setFeeDateOrder] = useState('newest'); // 'newest' | 'oldest'
+  const [activeFeeTab, setActiveFeeTab] = useState('aktif'); // 'aktif' | 'lunas'
   const feeHistorySectionRef = useRef(null);
 
   // Memoize filters for paginated riwayat lunas query
@@ -805,6 +949,7 @@ const TagihanFee = ({ onDataUpdate }) => {
       setIsPayModalOpen(false);
       setModalMarketing(null);
       setShowHistory(true);
+      setActiveFeeTab('lunas');
       await loadData();
       refreshPaidFees();
       requestAnimationFrame(() => {
@@ -911,22 +1056,79 @@ const TagihanFee = ({ onDataUpdate }) => {
         </div>
       </div>
 
-      <div className="glassmorphic-card p-5 space-y-4">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2"><Coins className="text-blue-500 shrink-0" /> Tagihan Fee ({formatRupiah(totalUnpaidFee)})</h2>
-          </div>
-          <p className="text-xs text-slate-500">Filter menurut tanggal check-in transaksi.</p>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant={feePreset === 'today' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('today')}>Hari ini</Button>
-            <Button type="button" variant={feePreset === 'yesterday' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('yesterday')}>Kemarin</Button>
-            <Button type="button" variant={feePreset === 'last7' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('last7')}>7 hari terakhir</Button>
-            <Button type="button" variant={feePreset === 'thisMonth' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('thisMonth')}>Bulan ini</Button>
-          </div>
-          {showFeeDateRange ? (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* Tab Fee Aktif / Lunas */}
+      <div className="flex gap-1 p-1 rounded-2xl bg-slate-100">
+        <button
+          onClick={() => setActiveFeeTab('aktif')}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeFeeTab === 'aktif' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Tagihan Aktif
+          {processedFees.length > 0 && (
+            <span className={`ml-2 inline-flex items-center justify-center min-w-[1.3rem] h-5 rounded-full text-[10px] font-bold px-1 ${activeFeeTab === 'aktif' ? 'bg-blue-100 text-blue-700' : 'bg-slate-300 text-slate-600'}`}>
+              {processedFees.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveFeeTab('lunas')}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeFeeTab === 'lunas' ? 'bg-white shadow text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Lunas
+          {paidFeesTotalItems > 0 && (
+            <span className={`ml-2 inline-flex items-center justify-center min-w-[1.3rem] h-5 rounded-full text-[10px] font-bold px-1 ${activeFeeTab === 'lunas' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-300 text-slate-600'}`}>
+              {paidFeesTotalItems}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeFeeTab === 'aktif' && (
+        <div className="glassmorphic-card p-5 space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2"><Coins className="text-blue-500 shrink-0" /> Tagihan Fee ({formatRupiah(totalUnpaidFee)})</h2>
+            </div>
+            <p className="text-xs text-slate-500">Filter menurut tanggal check-in transaksi.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant={feePreset === 'today' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('today')}>Hari ini</Button>
+              <Button type="button" variant={feePreset === 'yesterday' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('yesterday')}>Kemarin</Button>
+              <Button type="button" variant={feePreset === 'last7' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('last7')}>7 hari terakhir</Button>
+              <Button type="button" variant={feePreset === 'thisMonth' ? 'default' : 'outline'} size="sm" className="h-8 text-xs rounded-lg" onClick={() => applyFeePreset('thisMonth')}>Bulan ini</Button>
+            </div>
+            {showFeeDateRange ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
+                  <span className="text-xs font-medium text-slate-600 shrink-0">Dari</span>
+                  <input
+                    type="date"
+                    value={feeDateFrom}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFeePreset('custom');
+                      setFeeDateFrom(v);
+                      if (v > feeDateTo) setFeeDateTo(v);
+                    }}
+                    className="min-w-0 flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none"
+                  />
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
+                  <span className="text-xs font-medium text-slate-600 shrink-0">Sampai</span>
+                  <input
+                    type="date"
+                    value={feeDateTo}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFeePreset('custom');
+                      setFeeDateTo(v);
+                      if (v < feeDateFrom) setFeeDateFrom(v);
+                    }}
+                    className="min-w-0 flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none"
+                  />
+                </label>
+              </div>
+            ) : (
               <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
-                <span className="text-xs font-medium text-slate-600 shrink-0">Dari</span>
+                <span className="text-xs font-medium text-slate-600 shrink-0">Tanggal</span>
                 <input
                   type="date"
                   value={feeDateFrom}
@@ -934,99 +1136,70 @@ const TagihanFee = ({ onDataUpdate }) => {
                     const v = e.target.value;
                     setFeePreset('custom');
                     setFeeDateFrom(v);
-                    if (v > feeDateTo) setFeeDateTo(v);
-                  }}
-                  className="min-w-0 flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none"
-                />
-              </label>
-              <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
-                <span className="text-xs font-medium text-slate-600 shrink-0">Sampai</span>
-                <input
-                  type="date"
-                  value={feeDateTo}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setFeePreset('custom');
                     setFeeDateTo(v);
-                    if (v < feeDateFrom) setFeeDateFrom(v);
                   }}
                   className="min-w-0 flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none"
                 />
               </label>
+            )}
+          </div>
+
+          {/* Search & Sort UI */}
+          <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-100">
+            <div className="relative group">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+              <input
+                type="text"
+                placeholder="Cari marketing..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full text-xs bg-slate-50 border-2 border-slate-200 rounded-xl pl-8 pr-2 py-2.5 outline-none focus:border-blue-400 focus:bg-white transition-all shadow-sm"
+              />
+            </div>
+            <select
+              value={feeDateOrder}
+              onChange={(e) => setFeeDateOrder(e.target.value)}
+              className="text-xs bg-slate-50 border-2 border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-400"
+            >
+              <option value="newest">Tanggal terbaru</option>
+              <option value="oldest">Tanggal terlama</option>
+            </select>
+          </div>
+
+          {processedFees.length === 0 ? (
+            <div className="text-center py-8">
+              <Coins className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-500">
+                {searchTerm ? 'Marketing tidak ditemukan.' : 'Semua fee pada periode ini sudah lunas! 🎉'}
+              </p>
             </div>
           ) : (
-            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
-              <span className="text-xs font-medium text-slate-600 shrink-0">Tanggal</span>
-              <input
-                type="date"
-                value={feeDateFrom}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFeePreset('custom');
-                  setFeeDateFrom(v);
-                  setFeeDateTo(v);
-                }}
-                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none"
-              />
-            </label>
+            processedFees.map((fee) => (
+              <motion.div key={fee.nama} layout className="bg-white/50 border p-4 rounded-2xl relative">
+                <Button
+                  size="icon"
+                  onClick={() => handleShareUnpaidFee(fee)}
+                  className="absolute top-3 right-3 h-7 w-7 bg-green-500"
+                >
+                  <Share2 className="w-4 h-4" />
+                </Button>
+                <h3 className="font-bold text-gray-900 text-lg">{fee.nama}</h3>
+                <p className="text-gray-700">Jumlah Customer: <span className="font-semibold text-gray-900">{fee.count} orang</span></p>
+                <p className="text-gray-700">Total Fee: <span className="font-bold text-xl text-blue-600">{formatRupiah(fee.totalFee)}</span></p>
+                <div className="mt-4 border-t pt-4">
+                  <Button
+                    size="sm"
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                    onClick={() => openPayModal(fee)}
+                  >
+                    Bayar Fee {fee.nama}
+                  </Button>
+                </div>
+              </motion.div>
+            ))
           )}
         </div>
-
-        {/* Search & Sort UI */}
-        <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-100">
-          <div className="relative group">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-            <input
-              type="text"
-              placeholder="Cari marketing..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full text-xs bg-slate-50 border-2 border-slate-200 rounded-xl pl-8 pr-2 py-2.5 outline-none focus:border-blue-400 focus:bg-white transition-all shadow-sm"
-            />
-          </div>
-          <select
-            value={feeDateOrder}
-            onChange={(e) => setFeeDateOrder(e.target.value)}
-            className="text-xs bg-slate-50 border-2 border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-400"
-          >
-            <option value="newest">Tanggal terbaru</option>
-            <option value="oldest">Tanggal terlama</option>
-          </select>
-        </div>
-
-        {processedFees.length === 0 ? (
-          <div className="text-center py-8">
-            <Coins className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-500">
-              {searchTerm ? 'Marketing tidak ditemukan.' : 'Semua fee pada periode ini sudah lunas! 🎉'}
-            </p>
-          </div>
-        ) : (
-          processedFees.map((fee) => (
-            <motion.div key={fee.nama} layout className="bg-white/50 border p-4 rounded-2xl relative">
-              <Button
-                size="icon"
-                onClick={() => handleShareUnpaidFee(fee)}
-                className="absolute top-3 right-3 h-7 w-7 bg-green-500"
-              >
-                <Share2 className="w-4 h-4" />
-              </Button>
-              <h3 className="font-bold text-gray-900 text-lg">{fee.nama}</h3>
-              <p className="text-gray-700">Jumlah Customer: <span className="font-semibold text-gray-900">{fee.count} orang</span></p>
-              <p className="text-gray-700">Total Fee: <span className="font-bold text-xl text-blue-600">{formatRupiah(fee.totalFee)}</span></p>
-              <div className="mt-4 border-t pt-4">
-                <Button
-                  size="sm"
-                  className="w-full bg-blue-600 hover:bg-blue-700"
-                  onClick={() => openPayModal(fee)}
-                >
-                  Bayar Fee {fee.nama}
-                </Button>
-              </div>
-            </motion.div>
-          ))
-        )}
-      </div>
+      )}
 
       {/* Modal pembayaran per customer */}
       <Dialog open={isPayModalOpen} onOpenChange={(open) => { setIsPayModalOpen(open); if (!open) { setModalMarketing(null); setUploadFile(null); } }}>
@@ -1105,57 +1278,49 @@ const TagihanFee = ({ onDataUpdate }) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div ref={feeHistorySectionRef} className="glassmorphic-card p-5 space-y-4">
-        <button onClick={() => setShowHistory(!showHistory)} className="w-full flex justify-between items-center p-1">
-          <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2"><History className="w-5 h-5" />Riwayat Fee Lunas</h2>
-          <ChevronDown className={`w-5 h-5 transition-transform text-gray-800 ${showHistory ? 'rotate-180' : ''}`} />
-        </button>
-        <AnimatePresence>
-          {showHistory && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-4 space-y-3 overflow-hidden">
-              {paidFeesError && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{paidFeesError}</span>
-                </div>
-              )}
-              {paidFeesLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Spinner className="w-6 h-6 text-blue-500" />
-                </div>
-              ) : paidFees.length > 0 ? (
-                <>
-                  {paidFees.map(item => (
-                    <motion.div key={item.id} layout className="bg-white/50 border p-4 rounded-2xl relative">
-                      <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="absolute top-2 right-2 h-7 w-7 text-red-500"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Riwayat?</AlertDialogTitle><AlertDialogDescription>Riwayat fee lunas ini akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(item.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-                      <p className="font-bold text-lg text-gray-900">{item.marketing_name}</p>
-                      <p className="text-blue-700 font-semibold">{formatRupiah(item.total_fee)} ({item.customer_count} CS)</p>
-                      <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
-                      <div className="flex gap-2 items-center mt-2">
-                        {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" />Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran Fee</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran fee marketing.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt={`Bukti bayar ${item.marketing_name}`} className="rounded-lg w-full" /></DialogContent></Dialog>)}
-                        <Button size="icon" onClick={() => handleShare(item)} className="h-7 w-7 bg-green-500"><Share2 className="w-4 h-4" /></Button>
-                      </div>
-                    </motion.div>
-                  ))}
-                  <PaginationControls
-                    currentPage={paidFeesCurrentPage}
-                    totalPages={paidFeesTotalPages}
-                    onPageChange={setPaidFeesPage}
-                    itemsPerPage={paidFeesPageSize}
-                    totalItems={paidFeesTotalItems}
-                    onPageSizeChange={setPaidFeesPageSize}
-                  />
-                </>
-              ) : (
-                <div className="text-center py-8">
-                  <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-                  <p className="text-gray-500">Belum ada riwayat lunas untuk periode ini.</p>
-                </div>
-              )}
-            </motion.div>
+      {activeFeeTab === 'lunas' && (
+        <div ref={feeHistorySectionRef} className="glassmorphic-card p-5 space-y-4">
+          {paidFeesError && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{paidFeesError}</span>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+          {paidFeesLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Spinner className="w-6 h-6 text-blue-500" />
+            </div>
+          ) : paidFees.length > 0 ? (
+            <>
+              {paidFees.map(item => (
+                <motion.div key={item.id} layout className="bg-white/50 border p-4 rounded-2xl relative">
+                  <AlertDialog><AlertDialogTrigger asChild><Button size="icon" variant="ghost" className="absolute top-2 right-2 h-7 w-7 text-red-500"><Trash2 className="w-4 h-4" /></Button></AlertDialogTrigger><AlertDialogContent className="bg-white"><AlertDialogHeader><AlertDialogTitle>Hapus Riwayat?</AlertDialogTitle><AlertDialogDescription>Riwayat fee lunas ini akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(item.id)} className="bg-red-600">Hapus</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                  <p className="font-bold text-lg text-gray-900">{item.marketing_name}</p>
+                  <p className="text-blue-700 font-semibold">{formatRupiah(item.total_fee)} ({item.customer_count} CS)</p>
+                  <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
+                  <div className="flex gap-2 items-center mt-2">
+                    {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" />Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran Fee</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran fee marketing.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt={`Bukti bayar ${item.marketing_name}`} className="rounded-lg w-full" /></DialogContent></Dialog>)}
+                    <Button size="icon" onClick={() => handleShare(item)} className="h-7 w-7 bg-green-500"><Share2 className="w-4 h-4" /></Button>
+                  </div>
+                </motion.div>
+              ))}
+              <PaginationControls
+                currentPage={paidFeesCurrentPage}
+                totalPages={paidFeesTotalPages}
+                onPageChange={setPaidFeesPage}
+                itemsPerPage={paidFeesPageSize}
+                totalItems={paidFeesTotalItems}
+                onPageSizeChange={setPaidFeesPageSize}
+              />
+            </>
+          ) : (
+            <div className="text-center py-8">
+              <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-500">Belum ada riwayat lunas untuk periode ini.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

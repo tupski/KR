@@ -26,7 +26,7 @@ const DRAFT_STORAGE_KEY = 'kr:form-transaksi-modern:draft:v1';
 const SectionCard = ({ icon: Icon, title, subtitle, children, className = '' }) => (
   <section className={`rounded-2xl border border-blue-100 bg-white/90 p-5 shadow-sm backdrop-blur ${className}`}>
     <div className="mb-4 flex items-start gap-3">
-    <div className="rounded-xl bg-blue-100 p-2 text-blue-700"><Icon className="h-5 w-5" /></div>
+      <div className="rounded-xl bg-blue-100 p-2 text-blue-700"><Icon className="h-5 w-5" /></div>
       <div>
         <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
         {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
@@ -147,6 +147,11 @@ const FormTransaksiModern = ({
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return;
+      // Cek apakah ada field yang terisi (selain input_by dan checkinAt)
+      const hasData = ['namaCustomer', 'lokasiApartemen', 'nomorKamar', 'namaMarketing', 'jenisSewa', 'lamaSewa', 'tunai', 'transfer'].some(
+        (k) => parsed[k] && String(parsed[k]).trim() !== ''
+      );
+      if (!hasData) return;
       setFormData((prev) => ({
         ...prev,
         ...parsed,
@@ -155,7 +160,12 @@ const FormTransaksiModern = ({
         // checkinAt tidak dipulihkan dari draft, tetap mengikuti waktu terkini
         checkinAt: toDateTimeLocalValue(new Date()),
       }));
-      toast({ title: 'Draft dipulihkan', description: 'Input terakhir Anda berhasil dimuat ulang.' });
+      // Tampilkan toast hanya sekali per session per draftKey
+      const toastShownKey = `${draftKey}:toast_shown`;
+      if (!sessionStorage.getItem(toastShownKey)) {
+        toast({ title: 'Draft dipulihkan', description: 'Input terakhir Anda berhasil dimuat ulang.' });
+        sessionStorage.setItem(toastShownKey, '1');
+      }
     } catch (_error) {
       // Ignore draft parse error silently.
     }
@@ -209,7 +219,7 @@ const FormTransaksiModern = ({
         const activeMap = {};
         const txList = roomTransactions || [];
         const now = new Date();
-        
+
         // Ambil daftar kamar unik dari refs.kamar (atau fetch terbaru)
         const allKamar = kamar || [];
         allKamar.forEach(room => {
@@ -394,19 +404,20 @@ const FormTransaksiModern = ({
     setKtpFile(null);
     setBuktiTransferFile(null);
     localStorage.removeItem(draftKey);
+    sessionStorage.removeItem(`${draftKey}:toast_shown`);
   };
 
   const performSubmit = async () => {
     // 1. Double-submit protection
     if (isSubmitting) return;
-    
+
     // 2. Real-time session validation
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (!currentSession?.user?.id) {
-      toast({ 
-        title: 'Sesi berakhir', 
-        description: 'Silakan login kembali untuk menyimpan transaksi.', 
-        variant: 'destructive' 
+      toast({
+        title: 'Sesi berakhir',
+        description: 'Silakan login kembali untuk menyimpan transaksi.',
+        variant: 'destructive'
       });
       setIsSubmitting(false);
       return;
@@ -551,7 +562,7 @@ const FormTransaksiModern = ({
         <div>
           <h2 className="text-2xl font-black text-slate-900">Penempatan Belum Diatur</h2>
           <p className="text-slate-600 mt-3 leading-relaxed">
-            Akun Anda belum ditempatkan di lokasi apartemen manapun. 
+            Akun Anda belum ditempatkan di lokasi apartemen manapun.
             <br /><br />
             Silakan hubungi <span className="font-bold text-blue-600">Admin KR</span> untuk mengatur penempatan kerja akun Anda agar bisa melakukan input transaksi.
           </p>
@@ -562,337 +573,335 @@ const FormTransaksiModern = ({
 
   const content = (
     <div className={`mx-auto max-w-2xl space-y-5 ${embedded ? 'w-full' : ''}`}>
-        {!embedded && (
-          <header className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-cyan-500 p-5 text-white shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {!embedded && (
+        <header className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-cyan-500 p-5 text-white shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white">Form Input Transaksi</h1>
+            </div>
+          </div>
+        </header>
+      )}
+
+      <DayInfoBanner />
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          validateAndOpenConfirm();
+        }}
+        className="space-y-5"
+      >
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <SectionCard icon={UserCircle2} title="Data Penyewa" subtitle="Identitas customer dan unit apartemen">
+            <div className="space-y-4">
               <div>
-                <h1 className="text-2xl font-bold tracking-tight text-white">Form Input Transaksi</h1>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Nama Customer *</label>
+                <input value={formData.namaCustomer} onChange={(e) => handleChange('namaCustomer', e.target.value)} className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Masukkan nama customer" required />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Lokasi Apartemen *</label>
+                <SelectComponent
+                  styles={selectStyles}
+                  menuPortalTarget={selectPortalTarget}
+                  options={lokasiOptions}
+                  placeholder="Pilih lokasi..."
+                  value={lokasiOptions.find((x) => x.value === formData.lokasiApartemen) || null}
+                  onChange={(opt) => {
+                    handleChange('lokasiApartemen', opt?.value || '');
+                    handleChange('nomorKamar', '');
+                  }}
+                  isClearable
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Nomor Kamar *</label>
+                <SelectComponent
+                  styles={selectStyles}
+                  menuPortalTarget={selectPortalTarget}
+                  options={kamarOptions}
+                  placeholder={formData.lokasiApartemen ? 'Pilih nomor kamar...' : 'Pilih lokasi terlebih dahulu'}
+                  value={kamarOptions.find((x) => x.value === formData.nomorKamar) || null}
+                  onChange={(opt) => handleChange('nomorKamar', opt?.value || '')}
+                  isDisabled={!formData.lokasiApartemen}
+                  isClearable
+                />
               </div>
             </div>
-          </header>
-        )}
+          </SectionCard>
 
-        <DayInfoBanner />
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            validateAndOpenConfirm();
-          }}
-          className="space-y-5"
-        >
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <SectionCard icon={UserCircle2} title="Data Penyewa" subtitle="Identitas customer dan unit apartemen">
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Nama Customer *</label>
-                  <input value={formData.namaCustomer} onChange={(e) => handleChange('namaCustomer', e.target.value)} className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Masukkan nama customer" required />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Lokasi Apartemen *</label>
-                  <SelectComponent
-                    styles={selectStyles}
-                    menuPortalTarget={selectPortalTarget}
-                    options={lokasiOptions}
-                    placeholder="Pilih lokasi..."
-                    value={lokasiOptions.find((x) => x.value === formData.lokasiApartemen) || null}
-                    onChange={(opt) => {
-                      handleChange('lokasiApartemen', opt?.value || '');
-                      handleChange('nomorKamar', '');
-                    }}
-                    isClearable
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Nomor Kamar *</label>
-                  <SelectComponent
-                    styles={selectStyles}
-                    menuPortalTarget={selectPortalTarget}
-                    options={kamarOptions}
-                    placeholder={formData.lokasiApartemen ? 'Pilih nomor kamar...' : 'Pilih lokasi terlebih dahulu'}
-                    value={kamarOptions.find((x) => x.value === formData.nomorKamar) || null}
-                    onChange={(opt) => handleChange('nomorKamar', opt?.value || '')}
-                    isDisabled={!formData.lokasiApartemen}
-                    isClearable
-                  />
-                </div>
-              </div>
-            </SectionCard>
-
-            <SectionCard icon={Clock3} title="Sewa & Marketing" subtitle="Durasi sewa, shift, dan marketing">
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Waktu Check-in *</label>
-                  <input
-                    type="datetime-local"
-                    value={formData.checkinAt}
-                    onChange={(e) => handleChange('checkinAt', e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Durasi Sewa *</label>
-                  <div className="mb-3 grid grid-cols-2 gap-2">
-                    {RENTAL_TYPE_OPTIONS.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        onClick={() => setFormData((prev) => ({ ...prev, jenisSewa: item.value, lamaSewa: '', customSewaJam: '1' }))}
-                        className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                          formData.jenisSewa === item.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                  {!formData.jenisSewa && <p className="mb-2 text-xs text-slate-500">Pilih jenis sewa terlebih dahulu.</p>}
-                  {formData.jenisSewa && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {selectedDurationOptions.map((item) => (
-                        <button key={item} type="button" onClick={() => handleChange('lamaSewa', item)} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${formData.lamaSewa === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{item}</button>
-                      ))}
-                    </div>
-                  )}
-                  {formData.jenisSewa === 'TRANSIT' && formData.lamaSewa === 'Custom' && <input type="number" min={1} max={168} value={formData.customSewaJam} onChange={(e) => handleChange('customSewaJam', e.target.value)} className="mt-3 h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Jumlah jam custom" />}
-                  {formData.jenisSewa === 'PER_MALAM' && formData.lamaSewa === 'Custom' && <input type="number" min={1} max={30} value={formData.customSewaJam} onChange={(e) => handleChange('customSewaJam', e.target.value)} className="mt-3 h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Jumlah malam custom" />}
-                  {formData.jenisSewa === 'PER_MALAM' && formData.lamaSewa && (
-                    <p className="mt-2 text-xs text-slate-600">Checkout maksimal pukul 12:00 WIB sesuai jumlah malam.</p>
-                  )}
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Shift</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {SHIFT_OPTIONS.map((item) => (
-                      <button key={item} type="button" onClick={() => handleChange('shift', item)} className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${formData.shift === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{item}</button>
-                    ))}
-                  </div>
-                </div>
-                {renderMarketingSelector()}
-                {(effectiveRole === 'admin' || effectiveRole === 'super_admin') && (
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Input Oleh</label>
-                    <Select
-                      styles={selectStyles}
-                      menuPortalTarget={selectPortalTarget}
-                      options={karyawanOptions}
-                      placeholder="Pilih karyawan atau ketik nama..."
-                      value={karyawanOptions.find((x) => x.value === formData.input_by) || null}
-                      onChange={(opt) => handleChange('input_by', opt?.value || '')}
-                      isClearable
-                    />
-                    {formData.input_by && (
-                      <div className="mt-2 flex gap-3">
-                        <button type="button" className="text-sm text-slate-600 hover:text-slate-900" onClick={() => handleChange('input_by', '')}>
-                          Kosongkan pilihan input oleh
-                        </button>
-                        <button type="button" className="text-sm text-red-600 hover:text-red-800" onClick={async () => {
-                          if (!window.confirm(`Hapus nama input oleh ${formData.input_by}?`)) return;
-                          const { error } = await supabase.from('karyawan_list').delete().eq('name', formData.input_by);
-                          if (error) {
-                            toast({ title: 'Gagal menghapus input oleh', description: error.message, variant: 'destructive' });
-                            return;
-                          }
-                          setRefs((prev) => ({ ...prev, karyawan: prev.karyawan.filter((item) => item.name !== formData.input_by) }));
-                          handleChange('input_by', '');
-                          toast({ title: 'Input oleh dihapus dari daftar' });
-                        }}>
-                          Hapus dari daftar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </SectionCard>
-          </div>
-
-          <SectionCard icon={Wallet} title="Detail Pembayaran" subtitle="Tunai, transfer, bank tujuan, dan fee marketing">
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <SectionCard icon={Clock3} title="Sewa & Marketing" subtitle="Durasi sewa, shift, dan marketing">
+            <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Tunai (Rp)</label>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Waktu Check-in *</label>
                 <input
-                  inputMode="numeric"
-                  value={formData.tunai}
-                  onChange={(e) => {
-                    const val = formatCurrency(e.target.value);
-                    handleChange('tunai', val);
-                    if (parseCurrency(val) > 0 && parseCurrency(formData.transfer) > 0) {
-                      handleChange('transfer', '');
-                      handleChange('transferKe', '');
-                    }
-                  }}
-                  className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
-                  placeholder="0"
-                  disabled={parseCurrency(formData.transfer) > 0}
+                  type="datetime-local"
+                  value={formData.checkinAt}
+                  onChange={(e) => handleChange('checkinAt', e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700"
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Transfer (Rp)</label>
-                <input
-                  inputMode="numeric"
-                  value={formData.transfer}
-                  onChange={(e) => {
-                    const val = formatCurrency(e.target.value);
-                    handleChange('transfer', val);
-                    if (parseCurrency(val) > 0 && parseCurrency(formData.tunai) > 0) {
-                      handleChange('tunai', '');
-                    }
-                  }}
-                  className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
-                  placeholder="0"
-                  disabled={parseCurrency(formData.tunai) > 0}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Bank Tujuan</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {TRANSFER_TARGET_OPTIONS.map((item) => (
+                <label className="mb-2 block text-sm font-medium text-slate-700">Durasi Sewa *</label>
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  {RENTAL_TYPE_OPTIONS.map((item) => (
                     <button
-                      key={item}
+                      key={item.value}
                       type="button"
-                      onClick={() => handleChange('transferKe', item)}
-                      disabled={parseCurrency(formData.tunai) > 0}
-                      className={`h-11 rounded-2xl border text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
-                        formData.transferKe === item
-                          ? 'border-slate-900 bg-slate-900 text-white'
-                          : parseCurrency(formData.tunai) > 0
-                            ? 'border-slate-200 bg-slate-100 text-slate-400'
-                            : 'border-slate-300 bg-white text-slate-700'
-                      }`}
+                      onClick={() => setFormData((prev) => ({ ...prev, jenisSewa: item.value, lamaSewa: '', customSewaJam: '1' }))}
+                      className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${formData.jenisSewa === item.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
                     >
-                      {item}
+                      {item.label}
                     </button>
                   ))}
                 </div>
-              </div>
-              <div><label className="mb-2 block text-sm font-medium text-slate-700">Fee Marketing (Rp)</label><input inputMode="numeric" value={formData.feeMarketing} onChange={(e) => handleChange('feeMarketing', formatCurrency(e.target.value))} className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="0" /></div>
-            </div>
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-2 text-xs font-semibold text-amber-700">Deposit Tamu</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-amber-700">Tunai (Rp)</label>
-                  <input
-                    inputMode="numeric"
-                    value={formData.depositCash}
-                    onChange={(e) => {
-                      const val = formatCurrency(e.target.value);
-                      handleChange('depositCash', val);
-                      if (parseCurrency(val) > 0 && parseCurrency(formData.depositTransfer) > 0) {
-                        handleChange('depositTransfer', '');
-                      }
-                    }}
-                    className="h-10 w-full rounded-xl border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 disabled:cursor-not-allowed disabled:bg-amber-100 disabled:opacity-60"
-                    placeholder="0"
-                    disabled={parseCurrency(formData.depositTransfer) > 0}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-amber-700">Transfer (Rp)</label>
-                  <input
-                    inputMode="numeric"
-                    value={formData.depositTransfer}
-                    onChange={(e) => {
-                      const val = formatCurrency(e.target.value);
-                      handleChange('depositTransfer', val);
-                      if (parseCurrency(val) > 0 && parseCurrency(formData.depositCash) > 0) {
-                        handleChange('depositCash', '');
-                      }
-                    }}
-                    className="h-10 w-full rounded-xl border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 disabled:cursor-not-allowed disabled:bg-amber-100 disabled:opacity-60"
-                    placeholder="0"
-                    disabled={parseCurrency(formData.depositCash) > 0}
-                  />
-                </div>
-              </div>
-            </div>
-          </SectionCard>
-
-          <SectionCard icon={Upload} title="Unggah Berkas" subtitle="KTP dan bukti transfer (gambar dikompres otomatis)">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center">
-                  <Upload className="mb-1 h-5 w-5 text-slate-500" />
-                  <span className="text-sm font-medium text-slate-700">Upload KTP</span>
-                  <span className="text-xs text-slate-500">{ktpFile?.name || 'Pilih file gambar'}</span>
-                  <input ref={ktpInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImagePick('ktpFile', e.target.files?.[0] || null)} />
-                </label>
-                {ktpPreviewUrl && (
-                  <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => { setViewerItems([{ src: ktpPreviewUrl, title: 'KTP', downloadName: ktpFile?.name || 'ktp.jpg' }]); setViewerOpen(true); }}>
-                    <Eye className="mr-2 h-4 w-4" />Pratinjau KTP
-                  </Button>
+                {!formData.jenisSewa && <p className="mb-2 text-xs text-slate-500">Pilih jenis sewa terlebih dahulu.</p>}
+                {formData.jenisSewa && (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {selectedDurationOptions.map((item) => (
+                      <button key={item} type="button" onClick={() => handleChange('lamaSewa', item)} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${formData.lamaSewa === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{item}</button>
+                    ))}
+                  </div>
+                )}
+                {formData.jenisSewa === 'TRANSIT' && formData.lamaSewa === 'Custom' && <input type="number" min={1} max={168} value={formData.customSewaJam} onChange={(e) => handleChange('customSewaJam', e.target.value)} className="mt-3 h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Jumlah jam custom" />}
+                {formData.jenisSewa === 'PER_MALAM' && formData.lamaSewa === 'Custom' && <input type="number" min={1} max={30} value={formData.customSewaJam} onChange={(e) => handleChange('customSewaJam', e.target.value)} className="mt-3 h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="Jumlah malam custom" />}
+                {formData.jenisSewa === 'PER_MALAM' && formData.lamaSewa && (
+                  <p className="mt-2 text-xs text-slate-600">Checkout maksimal pukul 12:00 WIB sesuai jumlah malam.</p>
                 )}
               </div>
-              <div className="space-y-2">
-                <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center">
-                  <Landmark className="mb-1 h-5 w-5 text-slate-500" />
-                  <span className="text-sm font-medium text-slate-700">Upload Bukti Transfer</span>
-                  <span className="text-xs text-slate-500">{buktiTransferFile?.name || 'Pilih file gambar'}</span>
-                  <input ref={transferInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImagePick('buktiTransferFile', e.target.files?.[0] || null)} />
-                </label>
-                {buktiPreviewUrl && (
-                  <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => { setViewerItems([{ src: buktiPreviewUrl, title: 'Bukti transfer', downloadName: buktiTransferFile?.name || 'bukti.jpg' }]); setViewerOpen(true); }}>
-                    <Eye className="mr-2 h-4 w-4" />Pratinjau bukti
-                  </Button>
-                )}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Shift</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SHIFT_OPTIONS.map((item) => (
+                    <button key={item} type="button" onClick={() => handleChange('shift', item)} className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${formData.shift === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{item}</button>
+                  ))}
+                </div>
               </div>
-            </div>
-          </SectionCard>
-
-          <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2">
-            <div className="flex items-center gap-2 text-sm text-slate-600"><MapPin className="h-4 w-4" /><span>Lokasi: {formData.lokasiApartemen || '-'}</span></div>
-            <div className="flex items-center gap-2 text-sm text-slate-600"><DoorOpen className="h-4 w-4" /><span>Kamar: {formData.nomorKamar || '-'}</span></div>
-            <div className="flex items-center gap-2 text-sm text-slate-600"><Building2 className="h-4 w-4" /><span>Marketing: {formData.namaMarketing || '-'}</span></div>
-            <div className="flex items-center gap-2 text-sm text-slate-600"><UserSquare2 className="h-4 w-4" /><span>Input oleh: {formData.input_by || user?.email}</span></div>
-          </div>
-
-          <Button type="submit" disabled={isSubmitting} className="h-14 w-full rounded-2xl bg-emerald-600 text-base font-semibold text-white shadow-lg shadow-emerald-200 hover:bg-emerald-700">
-            <Save className="mr-2 h-5 w-5" />
-            {isSubmitting ? 'Menyimpan Transaksi...' : 'Simpan Transaksi'}
-          </Button>
-        </form>
-
-        <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
-          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Konfirmasi data transaksi</DialogTitle>
-              <DialogDescription>Periksa ringkasan berikut sebelum mengirim.</DialogDescription>
-            </DialogHeader>
-            <ul className="space-y-1.5 text-sm text-slate-700">
-              <li><span className="font-medium text-slate-900">Customer:</span> {formData.namaCustomer || '-'}</li>
-              <li><span className="font-medium text-slate-900">Lokasi / Kamar:</span> {formData.lokasiApartemen || '-'} — {formData.nomorKamar || '-'}</li>
-              <li><span className="font-medium text-slate-900">Marketing:</span> {formData.namaMarketing || '-'}</li>
-              <li>
-                <span className="font-medium text-slate-900">Durasi / Shift:</span> {formData.lamaSewa || '-'}
-                {formData.jenisSewa === 'TRANSIT' && formData.lamaSewa === 'Custom' && ` (${formData.customSewaJam} jam)`} / {formData.shift || '-'}
-              </li>
-              <li><span className="font-medium text-slate-900">Jenis sewa:</span> {formData.jenisSewa === 'PER_MALAM' ? 'Per malam' : formData.jenisSewa === 'TRANSIT' ? 'Transit' : '-'}</li>
-              <li><span className="font-medium text-slate-900">Check-in:</span> {previewCheckInDate.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</li>
-              <li><span className="font-medium text-slate-900">Estimasi checkout:</span> {previewRentalConfig ? previewRentalConfig.checkoutDate.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</li>
-              <li><span className="font-medium text-slate-900">Tunai:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.tunai))}</li>
-              <li><span className="font-medium text-slate-900">Transfer:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.transfer))}{' '}{formData.transferKe ? `(ke ${formData.transferKe})` : ''}</li>
-              <li><span className="font-medium text-slate-900">Fee marketing:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.feeMarketing))}</li>
-              <li><span className="font-medium text-slate-900">Input oleh:</span> {formData.input_by || user?.email || '-'}</li>
-              {(parseCurrency(formData.depositCash) > 0 || parseCurrency(formData.depositTransfer) > 0) && (
-                <li className="rounded-lg bg-amber-50 p-2 text-amber-800">
-                  <span className="font-medium">💰 Deposit:</span>{' '}
-                  {parseCurrency(formData.depositCash) > 0 && `Tunai ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.depositCash))} `}
-                  {parseCurrency(formData.depositTransfer) > 0 && `Transfer ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.depositTransfer))}`}
-                  {' '}(tidak masuk omset)
-                </li>
+              {renderMarketingSelector()}
+              {(effectiveRole === 'admin' || effectiveRole === 'super_admin') && (
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Input Oleh</label>
+                  <Select
+                    styles={selectStyles}
+                    menuPortalTarget={selectPortalTarget}
+                    options={karyawanOptions}
+                    placeholder="Pilih karyawan atau ketik nama..."
+                    value={karyawanOptions.find((x) => x.value === formData.input_by) || null}
+                    onChange={(opt) => handleChange('input_by', opt?.value || '')}
+                    isClearable
+                  />
+                  {formData.input_by && (
+                    <div className="mt-2 flex gap-3">
+                      <button type="button" className="text-sm text-slate-600 hover:text-slate-900" onClick={() => handleChange('input_by', '')}>
+                        Kosongkan pilihan input oleh
+                      </button>
+                      <button type="button" className="text-sm text-red-600 hover:text-red-800" onClick={async () => {
+                        if (!window.confirm(`Hapus nama input oleh ${formData.input_by}?`)) return;
+                        const { error } = await supabase.from('karyawan_list').delete().eq('name', formData.input_by);
+                        if (error) {
+                          toast({ title: 'Gagal menghapus input oleh', description: error.message, variant: 'destructive' });
+                          return;
+                        }
+                        setRefs((prev) => ({ ...prev, karyawan: prev.karyawan.filter((item) => item.name !== formData.input_by) }));
+                        handleChange('input_by', '');
+                        toast({ title: 'Input oleh dihapus dari daftar' });
+                      }}>
+                        Hapus dari daftar
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
-              <li><span className="font-medium text-slate-900">Berkas:</span> KTP {ktpFile ? `(${ktpFile.name})` : '(tidak ada)'} — Bukti{' '}{buktiTransferFile ? `(${buktiTransferFile.name})` : '(tidak ada)'}</li>
-            </ul>
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button type="button" variant="outline" onClick={() => setShowConfirmModal(false)} disabled={isSubmitting}>Batal</Button>
-              <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => performSubmit()} disabled={isSubmitting}>{isSubmitting ? 'Mengirim...' : 'Kirim'}</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </div>
+          </SectionCard>
+        </div>
 
-        <ImageViewerModal open={viewerOpen} onOpenChange={setViewerOpen} items={viewerItems} />
-      </div>
+        <SectionCard icon={Wallet} title="Detail Pembayaran" subtitle="Tunai, transfer, bank tujuan, dan fee marketing">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Tunai (Rp)</label>
+              <input
+                inputMode="numeric"
+                value={formData.tunai}
+                onChange={(e) => {
+                  const val = formatCurrency(e.target.value);
+                  handleChange('tunai', val);
+                  if (parseCurrency(val) > 0 && parseCurrency(formData.transfer) > 0) {
+                    handleChange('transfer', '');
+                    handleChange('transferKe', '');
+                  }
+                }}
+                className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
+                placeholder="0"
+                disabled={parseCurrency(formData.transfer) > 0}
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Transfer (Rp)</label>
+              <input
+                inputMode="numeric"
+                value={formData.transfer}
+                onChange={(e) => {
+                  const val = formatCurrency(e.target.value);
+                  handleChange('transfer', val);
+                  if (parseCurrency(val) > 0 && parseCurrency(formData.tunai) > 0) {
+                    handleChange('tunai', '');
+                  }
+                }}
+                className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
+                placeholder="0"
+                disabled={parseCurrency(formData.tunai) > 0}
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Bank Tujuan</label>
+              <div className="grid grid-cols-2 gap-2">
+                {TRANSFER_TARGET_OPTIONS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => handleChange('transferKe', item)}
+                    disabled={parseCurrency(formData.tunai) > 0}
+                    className={`h-11 rounded-2xl border text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${formData.transferKe === item
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : parseCurrency(formData.tunai) > 0
+                        ? 'border-slate-200 bg-slate-100 text-slate-400'
+                        : 'border-slate-300 bg-white text-slate-700'
+                      }`}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div><label className="mb-2 block text-sm font-medium text-slate-700">Fee Marketing (Rp)</label><input inputMode="numeric" value={formData.feeMarketing} onChange={(e) => handleChange('feeMarketing', formatCurrency(e.target.value))} className="h-11 w-full rounded-2xl border border-slate-300 px-4 text-sm outline-none focus:border-slate-700" placeholder="0" /></div>
+          </div>
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-2 text-xs font-semibold text-amber-700">Deposit Tamu</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-amber-700">Tunai (Rp)</label>
+                <input
+                  inputMode="numeric"
+                  value={formData.depositCash}
+                  onChange={(e) => {
+                    const val = formatCurrency(e.target.value);
+                    handleChange('depositCash', val);
+                    if (parseCurrency(val) > 0 && parseCurrency(formData.depositTransfer) > 0) {
+                      handleChange('depositTransfer', '');
+                    }
+                  }}
+                  className="h-10 w-full rounded-xl border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 disabled:cursor-not-allowed disabled:bg-amber-100 disabled:opacity-60"
+                  placeholder="0"
+                  disabled={parseCurrency(formData.depositTransfer) > 0}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-amber-700">Transfer (Rp)</label>
+                <input
+                  inputMode="numeric"
+                  value={formData.depositTransfer}
+                  onChange={(e) => {
+                    const val = formatCurrency(e.target.value);
+                    handleChange('depositTransfer', val);
+                    if (parseCurrency(val) > 0 && parseCurrency(formData.depositCash) > 0) {
+                      handleChange('depositCash', '');
+                    }
+                  }}
+                  className="h-10 w-full rounded-xl border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 disabled:cursor-not-allowed disabled:bg-amber-100 disabled:opacity-60"
+                  placeholder="0"
+                  disabled={parseCurrency(formData.depositCash) > 0}
+                />
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard icon={Upload} title="Unggah Berkas" subtitle="KTP dan bukti transfer (gambar dikompres otomatis)">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center">
+                <Upload className="mb-1 h-5 w-5 text-slate-500" />
+                <span className="text-sm font-medium text-slate-700">Upload KTP</span>
+                <span className="text-xs text-slate-500">{ktpFile?.name || 'Pilih file gambar'}</span>
+                <input ref={ktpInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImagePick('ktpFile', e.target.files?.[0] || null)} />
+              </label>
+              {ktpPreviewUrl && (
+                <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => { setViewerItems([{ src: ktpPreviewUrl, title: 'KTP', downloadName: ktpFile?.name || 'ktp.jpg' }]); setViewerOpen(true); }}>
+                  <Eye className="mr-2 h-4 w-4" />Pratinjau KTP
+                </Button>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center">
+                <Landmark className="mb-1 h-5 w-5 text-slate-500" />
+                <span className="text-sm font-medium text-slate-700">Upload Bukti Transfer</span>
+                <span className="text-xs text-slate-500">{buktiTransferFile?.name || 'Pilih file gambar'}</span>
+                <input ref={transferInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImagePick('buktiTransferFile', e.target.files?.[0] || null)} />
+              </label>
+              {buktiPreviewUrl && (
+                <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => { setViewerItems([{ src: buktiPreviewUrl, title: 'Bukti transfer', downloadName: buktiTransferFile?.name || 'bukti.jpg' }]); setViewerOpen(true); }}>
+                  <Eye className="mr-2 h-4 w-4" />Pratinjau bukti
+                </Button>
+              )}
+            </div>
+          </div>
+        </SectionCard>
+
+        <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2">
+          <div className="flex items-center gap-2 text-sm text-slate-600"><MapPin className="h-4 w-4" /><span>Lokasi: {formData.lokasiApartemen || '-'}</span></div>
+          <div className="flex items-center gap-2 text-sm text-slate-600"><DoorOpen className="h-4 w-4" /><span>Kamar: {formData.nomorKamar || '-'}</span></div>
+          <div className="flex items-center gap-2 text-sm text-slate-600"><Building2 className="h-4 w-4" /><span>Marketing: {formData.namaMarketing || '-'}</span></div>
+          <div className="flex items-center gap-2 text-sm text-slate-600"><UserSquare2 className="h-4 w-4" /><span>Input oleh: {formData.input_by || user?.email}</span></div>
+        </div>
+
+        <Button type="submit" disabled={isSubmitting} className="h-14 w-full rounded-2xl bg-emerald-600 text-base font-semibold text-white shadow-lg shadow-emerald-200 hover:bg-emerald-700">
+          <Save className="mr-2 h-5 w-5" />
+          {isSubmitting ? 'Menyimpan Transaksi...' : 'Simpan Transaksi'}
+        </Button>
+      </form>
+
+      <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Konfirmasi data transaksi</DialogTitle>
+            <DialogDescription>Periksa ringkasan berikut sebelum mengirim.</DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1.5 text-sm text-slate-700">
+            <li><span className="font-medium text-slate-900">Customer:</span> {formData.namaCustomer || '-'}</li>
+            <li><span className="font-medium text-slate-900">Lokasi / Kamar:</span> {formData.lokasiApartemen || '-'} — {formData.nomorKamar || '-'}</li>
+            <li><span className="font-medium text-slate-900">Marketing:</span> {formData.namaMarketing || '-'}</li>
+            <li>
+              <span className="font-medium text-slate-900">Durasi / Shift:</span> {formData.lamaSewa || '-'}
+              {formData.jenisSewa === 'TRANSIT' && formData.lamaSewa === 'Custom' && ` (${formData.customSewaJam} jam)`} / {formData.shift || '-'}
+            </li>
+            <li><span className="font-medium text-slate-900">Jenis sewa:</span> {formData.jenisSewa === 'PER_MALAM' ? 'Per malam' : formData.jenisSewa === 'TRANSIT' ? 'Transit' : '-'}</li>
+            <li><span className="font-medium text-slate-900">Check-in:</span> {previewCheckInDate.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</li>
+            <li><span className="font-medium text-slate-900">Estimasi checkout:</span> {previewRentalConfig ? previewRentalConfig.checkoutDate.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</li>
+            <li><span className="font-medium text-slate-900">Tunai:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.tunai))}</li>
+            <li><span className="font-medium text-slate-900">Transfer:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.transfer))}{' '}{formData.transferKe ? `(ke ${formData.transferKe})` : ''}</li>
+            <li><span className="font-medium text-slate-900">Fee marketing:</span>{' '}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.feeMarketing))}</li>
+            <li><span className="font-medium text-slate-900">Input oleh:</span> {formData.input_by || user?.email || '-'}</li>
+            {(parseCurrency(formData.depositCash) > 0 || parseCurrency(formData.depositTransfer) > 0) && (
+              <li className="rounded-lg bg-amber-50 p-2 text-amber-800">
+                <span className="font-medium">💰 Deposit:</span>{' '}
+                {parseCurrency(formData.depositCash) > 0 && `Tunai ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.depositCash))} `}
+                {parseCurrency(formData.depositTransfer) > 0 && `Transfer ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseCurrency(formData.depositTransfer))}`}
+                {' '}(tidak masuk omset)
+              </li>
+            )}
+            <li><span className="font-medium text-slate-900">Berkas:</span> KTP {ktpFile ? `(${ktpFile.name})` : '(tidak ada)'} — Bukti{' '}{buktiTransferFile ? `(${buktiTransferFile.name})` : '(tidak ada)'}</li>
+          </ul>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setShowConfirmModal(false)} disabled={isSubmitting}>Batal</Button>
+            <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => performSubmit()} disabled={isSubmitting}>{isSubmitting ? 'Mengirim...' : 'Kirim'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ImageViewerModal open={viewerOpen} onOpenChange={setViewerOpen} items={viewerItems} />
+    </div>
   );
 
   if (embedded) {

@@ -64,6 +64,20 @@ function App() {
   const [isMaintenance, setIsMaintenance] = useState(false);
   const [appName, setAppName] = useState('Kakarama Room');
 
+  // Live clock — ticks every second
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const liveDateTime = useMemo(() => {
+    const opts = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+    const dateStr = now.toLocaleDateString('id-ID', opts);
+    const timeStr = now.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${dateStr} — ${timeStr} WIB`;
+  }, [now]);
+
   useEffect(() => {
     const fetchSettings = async () => {
       const { data } = await supabase.from('system_settings').select('*');
@@ -318,13 +332,24 @@ function App() {
     <>
       <header className="sticky top-0 z-50 bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-4 text-white shadow-lg">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
-          <div className="flex items-center gap-2">
+          {/* Logo + App Name (always visible) */}
+          <div className="flex items-center gap-2 shrink-0">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/90 p-1 shadow-sm ring-1 ring-white/40">
               <img src="/logo-kr-transparent-square.png" alt="KR" className="h-full w-full object-contain" />
             </span>
-            <span className="text-sm font-bold tracking-wide text-white sm:text-base">{appName}</span>
+            <div className="flex flex-col leading-tight">
+              <span className="text-sm font-bold tracking-wide text-white sm:text-base">{appName}</span>
+              {/* Mobile: tanggal & jam di bawah nama app */}
+              <span className="text-[10px] font-medium text-white/80 sm:hidden">{liveDateTime}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Desktop: tanggal & jam di tengah */}
+          <div className="hidden sm:flex absolute left-1/2 -translate-x-1/2 items-center">
+            <span className="text-sm font-semibold text-white/90 whitespace-nowrap tracking-wide">{liveDateTime}</span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
             {/* Megaphone: hanya admin/superadmin */}
             {(userRole === 'admin' || userRole === 'super_admin') && (
               <button
