@@ -87,8 +87,15 @@ Rencana Perombakan Form Transaksi Karyawan.md
 supabase/.temp/
 
 # Others
-**/backup
-/.kiro
-/.clinerules
-/oauth-server
+**/backup/
+.kiro/
+.clinerules/
+oauth-server/
 .env*
+.roo/
+sb-backups/
+spec/
+.roomodes
+agent_skills_spec.md
+ARCHITECTURE.md
+coding-agent-docs/
