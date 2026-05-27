@@ -286,7 +286,9 @@ export default defineConfig({
 	},
 	plugins: [
 		...(isDev ? [inlineEditPlugin(), editModeDevPlugin(), iframeRouteRestorationPlugin(), selectionModePlugin()] : []),
-		react(),
+		// @vitejs/plugin-react v4 is incompatible with vite 8 (bundled by vitest 4).
+		// process.env.VITEST is set when running under vitest; skip react() in that case.
+		...(process.env.VITEST ? [] : [react()]),
 		addTransformIndexHtml
 	],
 	server: {

@@ -66,15 +66,17 @@ Desktop.ini
 .agents
 .cursor
 .continue
-.clinerules/*
+.clinerules/
 .clineignore
-.kiro/*
+.kiro/
 agent-preferences.json
 AGENTS.md
 github.com_supabase-community_supabase-mcp
 -p
 
-# Planning / scratch docs
+==============================================================
+# Project-specific files to ignore (uncomment if needed)
+===============================================================
 planbaru.md
 implementation_plan.md
 plan-auditCodebase.prompt.md
@@ -86,9 +88,20 @@ Rencana Perombakan Form Transaksi Karyawan.md
 # =============================================================
 supabase/.temp/
 
-# Others
+# ================================================================
+# Miscellaneous
+# ================================================================
 **/backup
 /.kiro
 /.clinerules
 /oauth-server
+/.roo
+spec/
+/coding-agent-docs
+/ARCHITECTURE.md
+# ===============================================================
+# FILES TO IGNORE
+# ===============================================================
 .env*
+.roomodes
+agent_skills_spec.md

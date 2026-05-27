@@ -1,3 +1,6 @@
+import { format } from 'date-fns';
+import { id as idLocale } from 'date-fns/locale';
+
 /**
  * Menghitung waktu checkout maksimal (12:00 WIB) untuk sewa harian.
  * Aturan: 
@@ -87,3 +90,49 @@ export const getRentalConfig = (rentalType, duration, customHours, checkInDate =
   const checkoutDate = new Date(checkInDate.getTime() + hours * 3600000);
   return { rentalHours: hours, checkoutDate };
 };
+
+/**
+ * Get a human-readable display of the rental duration from a transaction.
+ * "PER_MALAM" → "N Malam", otherwise → "N Jam"
+ *
+ * @param {object} tx - Transaction object with rental_type and rental_duration
+ * @returns {string} Display string like "2 Malam", "3 Jam", or "-"
+ */
+export function getSewaDisplay(tx) {
+  if (!tx) return '-';
+  if (tx.rental_type === 'PER_MALAM') {
+    const nights = Math.ceil(Number(tx.rental_duration || 1));
+    return `${nights} Malam`;
+  }
+  const hours = Number(tx.rental_duration || 1);
+  return `${hours} Jam`;
+}
+
+/**
+ * Format a date using date-fns with Indonesian locale.
+ *
+ * @param {Date|string} date - Date to format
+ * @param {string} [formatStr='dd MMM yyyy'] - date-fns format string
+ * @returns {string} Formatted date string or "-" on error
+ */
+export function formatDate(date, formatStr = 'dd MMM yyyy') {
+  try {
+    return format(new Date(date), formatStr, { locale: idLocale });
+  } catch {
+    return '-';
+  }
+}
+
+/**
+ * Format a date to "HH:mm" time string using date-fns with Indonesian locale.
+ *
+ * @param {Date|string} date - Date to format
+ * @returns {string} Formatted time string like "14:30" or "-" on error
+ */
+export function formatTime(date) {
+  try {
+    return format(new Date(date), 'HH:mm', { locale: idLocale });
+  } catch {
+    return '-';
+  }
+}

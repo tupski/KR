@@ -9,7 +9,7 @@ import { resolveStorageUrl } from '@/lib/storageUrl';
 import { formatPaymentLines, formatRupiahNumber } from '@/lib/formatPaymentText';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import FormTransaksiModern from '@/components/FormTransaksiModern';
+import { FormTransaksiPage } from '@/components/transaksi/FormTransaksiPage';
 import DayInfoBanner from '@/components/DayInfoBanner';
 import PaginationControls from '@/components/PaginationControls';
 
@@ -203,7 +203,7 @@ const KaryawanTransaksi = ({ onRequestNavigate }) => {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
           {/* Kolom Form */}
           <div className="lg:col-span-7">
-            <FormTransaksiModern
+            <FormTransaksiPage
               roleMode="karyawan"
               requireMarketing={true}
               allowReferenceManagement={false}
