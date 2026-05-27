@@ -105,3 +105,5 @@ spec/
 .env*
 .roomodes
 agent_skills_spec.md
+sb-backups/
+.roo/
