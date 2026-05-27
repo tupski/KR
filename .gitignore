@@ -91,3 +91,4 @@ supabase/.temp/
 /.kiro
 /.clinerules
 /oauth-server
+.env*
