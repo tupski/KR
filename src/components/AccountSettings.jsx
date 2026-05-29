@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
+import { uploadFile } from '@/lib/storage';
 import { compressImageFile } from '@/lib/compressImage';
 import { isPushSupported, registerPushSubscription, saveSubscriptionToSupabase } from '@/lib/pushClient';
 
@@ -111,10 +111,10 @@ export default function AccountSettings({ open, onOpenChange }) {
     setLoading(true);
     try {
       const compressed = await compressImageFile(file, { maxWidth: 1024, maxHeight: 1024, quality: 0.85 });
-      const url = await uploadToVercelBlob(compressed, 'avatars');
-      setAvatarUrl(url);
+      const result = await uploadFile(compressed, 'avatars');
+      setAvatarUrl(result.url);
       // Simpan ke user_profiles
-      const { error } = await supabase.from('user_profiles').update({ avatar_url: url, updated_at: new Date().toISOString() }).eq('id', userId);
+      const { error } = await supabase.from('user_profiles').update({ avatar_url: result.key, updated_at: new Date().toISOString() }).eq('id', userId);
       if (error && String(error.message || '').includes('avatar_url')) {
         toast({
           title: 'Kolom avatar_url belum ada',
@@ -125,7 +125,7 @@ export default function AccountSettings({ open, onOpenChange }) {
         throw error;
       }
       // Update metadata agar header langsung ikut
-      await supabase.auth.updateUser({ data: { avatar_url: url } });
+      await supabase.auth.updateUser({ data: { avatar_url: result.url } });
       await refreshSession?.();
       toast({ title: 'Foto profil diperbarui' });
     } catch (e) {

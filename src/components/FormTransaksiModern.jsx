@@ -7,7 +7,7 @@ import { toast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase, supabaseProjectRef } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
+import { uploadFile } from '@/lib/storage';
 import { compressImageFile } from '@/lib/compressImage';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { calcEndAt, getActiveTransaction, getRentalConfig, capitalizeWords } from '@/lib/roomUtils';
@@ -341,10 +341,11 @@ const FormTransaksiModern = ({
     }
   };
 
-  const uploadFile = async (file, bucket) => {
+  const doUploadFile = async (file, bucket) => {
     if (!file) return null;
     const folder = bucket === 'ktp_images' ? 'ktp-images' : bucket === 'transfer_proofs' ? 'transfer-proofs' : 'uploads';
-    return uploadToVercelBlob(file, folder);
+    const result = await uploadFile(file, folder);
+    return result.key;
   };
 
   const validateAndOpenConfirm = () => {
@@ -432,8 +433,8 @@ const FormTransaksiModern = ({
 
     try {
       const [ktpUrl, transferProofUrl] = await Promise.all([
-        uploadFile(ktpFile, 'ktp_images'),
-        uploadFile(buktiTransferFile, 'transfer_proofs'),
+        doUploadFile(ktpFile, 'ktp_images'),
+        doUploadFile(buktiTransferFile, 'transfer_proofs'),
       ]);
       const payload = {
         user_id: user.id,

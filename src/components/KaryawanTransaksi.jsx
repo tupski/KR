@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import { getFileUrl } from '@/lib/storage';
 import { formatPaymentLines, formatRupiahNumber } from '@/lib/formatPaymentText';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -173,8 +173,8 @@ const KaryawanTransaksi = ({ onRequestNavigate }) => {
   const previewViewerItems = useMemo(() => {
     if (!previewTransaksi) return [];
     const list = [];
-    if (previewTransaksi.ktp_image_url) list.push({ src: resolveStorageUrl(previewTransaksi.ktp_image_url), title: 'KTP', downloadName: `ktp-${previewTransaksi.id}.jpg` });
-    if (previewTransaksi.transfer_proof_url) list.push({ src: resolveStorageUrl(previewTransaksi.transfer_proof_url), title: 'Bukti transfer', downloadName: `bukti-${previewTransaksi.id}.jpg` });
+    if (previewTransaksi.ktp_image_url) list.push({ src: getFileUrl(previewTransaksi.ktp_image_url), title: 'KTP', downloadName: `ktp-${previewTransaksi.id}.jpg` });
+    if (previewTransaksi.transfer_proof_url) list.push({ src: getFileUrl(previewTransaksi.transfer_proof_url), title: 'Bukti transfer', downloadName: `bukti-${previewTransaksi.id}.jpg` });
     return list;
   }, [previewTransaksi]);
 

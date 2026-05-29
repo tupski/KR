@@ -5,7 +5,7 @@ import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/lib/customSupabaseClient';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import { getFileUrl } from '@/lib/storage';
 import Select from 'react-select';
 import { Image as ImageIcon } from 'lucide-react';
 
@@ -633,7 +633,7 @@ const ManajemenDeposit = () => {
                             <DialogDescription className="text-slate-300">Bukti refund deposit customer {tx.customer_name}.</DialogDescription>
                           </DialogHeader>
                           <img
-                            src={resolveStorageUrl(tx.deposit_refund_proof_url)}
+                            src={getFileUrl(tx.deposit_refund_proof_url)}
                             alt="Bukti Refund"
                             className="w-full rounded-2xl border border-white/20"
                           />

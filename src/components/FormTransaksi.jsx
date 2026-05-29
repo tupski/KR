@@ -1,3 +1,3 @@
-import FormTransaksiModern from '@/components/mFormTransaksiModern';
+import FormTransaksiModern from '@/components/FormTransaksiModern';
 
 export default FormTransaksiModern;
