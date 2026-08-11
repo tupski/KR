@@ -13,10 +13,11 @@ import authRoutes from './routes/authRoutes.js';
 import dbRoutes from './routes/dbRoutes.js';
 import rpcBridge from './routes/rpcBridge.js';
 import storageRoutes from './routes/storageRoutes.js';
+import installRoutes from './routes/installRoutes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export function createApp({ cfg = loadConfig(), pool = createPool(cfg.databaseUrl) } = {}) {
+export function createApp({ cfg = loadConfig(), pool = createPool(cfg.databaseUrl), install } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(cors({ origin: true, credentials: true }));
@@ -29,6 +30,7 @@ export function createApp({ cfg = loadConfig(), pool = createPool(cfg.databaseUr
   app.use('/api/db', dbRoutes({ pool, cfg }));
   app.use('/api/rpc', rpcBridge({ pool, cfg }));
   app.use('/api/storage', storageRoutes);
+  app.use('/api/install', installRoutes({ configDir: cfg.configDir, ...(install || {}) }));
 
   const dist = path.join(root, cfg.distDir);
   const apiPath = (p) => p.startsWith('/api/');

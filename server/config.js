@@ -12,6 +12,7 @@ export function loadConfig(env = process.env) {
   }
   return {
     port: Number(env.PORT) || 3000,
+    configDir: env.CONFIG_DIR || 'server/config',
     databaseUrl: env.DATABASE_URL,
     jwtSecret: env.JWT_SECRET,
     cookieSecure: env.COOKIE_SECURE === 'true',
