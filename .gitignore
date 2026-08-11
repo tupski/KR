@@ -27,6 +27,7 @@ coverage/
 # Vercel CLI scratch files (contain access tokens & telemetry IDs)
 auth.json
 config.json
+server/config/installed.lock
 telemetry-device.json
 telemetry-session.json
 .vercel
@@ -91,7 +92,9 @@ supabase/.temp/
 .kiro/
 .clinerules/
 oauth-server/
-.env*
+.env
+.env.*
+!**/.env.example
 .roo/
 sb-backups/
 spec/

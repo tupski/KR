@@ -1,5 +1,10 @@
 // Env config: baca .env via dotenv, validasi startup, tanpa hardcoded secret.
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'node:path';
+
+// Installer menulis secrets ke server/config/.env — muat dulu, root .env menimpa.
+dotenv.config({ path: path.resolve('server/config/.env') });
+dotenv.config();
 
 export function loadConfig(env = process.env) {
   const required = ['DATABASE_URL', 'JWT_SECRET'];

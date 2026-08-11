@@ -84,7 +84,9 @@ describe('GlobalFilterBar — Property 3: Nilai default filter sesuai tanggal re
           async (T) => {
             // Pin system time to T BEFORE rendering so the useState initialisers
             // (which call new Date() via firstOfMonth() and today()) observe T.
-            vi.setSystemTime(T);
+            // Copy: fast-check shrinks by mutating the Date (setTime), which would
+            // otherwise corrupt the pinned fake clock → new Date(NaN) flake.
+            vi.setSystemTime(new Date(T.getTime()));
 
             const { unmount } = render(<AnalyticsDashboard />);
 
@@ -276,7 +278,9 @@ describe('GlobalFilterBar — Property 5: Tombol preset filter menghasilkan rent
           async (T) => {
             // Pin system time to T BEFORE rendering so preset handlers
             // observe T when calling new Date().
-            vi.setSystemTime(T);
+            // Copy: fast-check shrinks by mutating the Date (setTime), which would
+            // otherwise corrupt the pinned fake clock → new Date(NaN) flake.
+            vi.setSystemTime(new Date(T.getTime()));
 
             const { container, unmount } = render(<AnalyticsDashboard />);
 
