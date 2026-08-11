@@ -23,6 +23,8 @@ import AllNotifications from '@/components/AllNotifications';
 import AnnouncementBanner from '@/components/AnnouncementBanner';
 import ComposeAnnouncement from '@/components/ComposeAnnouncement';
 import { supabase } from '@/lib/customSupabaseClient';
+import { IS_SELF_HOST } from '@/lib/config';
+import InstallerPage from '@/pages/InstallerPage';
 import AccountSettings from '@/components/AccountSettings';
 import KalenderLibur from '@/components/KalenderLibur';
 import {
@@ -48,6 +50,26 @@ import {
 function App() {
   // Integrate page visibility hook — prevents reload on tab switch
   useDisableAutoReload();
+
+  // Self-host: installer gate (F1). Non-installed → render installer only.
+  const [notInstalled, setNotInstalled] = useState(null);
+  useEffect(() => {
+    if (!IS_SELF_HOST) return;
+    let mounted = true;
+    fetch('/api/install/status', { credentials: 'include' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((j) => { if (mounted) setNotInstalled(j.installed === false); })
+      .catch(() => { if (mounted) setNotInstalled(false); });
+    return () => { mounted = false; };
+  }, []);
+
+  // Self-host: realtime via polling (K3) — aktifkan interval untuk semua channel
+  // (.channel().on('postgres_changes').subscribe() dipetakan ke polling oleh apiClient).
+  useEffect(() => {
+    if (!IS_SELF_HOST) return;
+    const timer = supabase?.startChannelPolling?.({ intervalSec: 15 });
+    return () => clearInterval(timer);
+  }, []);
 
   // FIX: Gunakan useRef untuk track mount status, bukan console.log di function body
   // console.log di function body fire setiap render (termasuk clock tick 1 detik)
@@ -443,6 +465,11 @@ function App() {
         return <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
     }
   };
+
+  if (notInstalled) {
+    // Installer: tanpa layout/auth (F1). Status GET /api/install/status saat boot.
+    return <InstallerPage onDone={() => setNotInstalled(false)} />;
+  }
 
   if (loading) {
     return (

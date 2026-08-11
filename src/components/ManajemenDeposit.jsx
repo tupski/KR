@@ -312,9 +312,9 @@ const ManajemenDeposit = () => {
         const fileExt = fileBukti.name.split('.').pop();
         const fileName = `refund-${selectedTx.id}-${Date.now()}.${fileExt}`;
         const filePath = `refund_proofs/${fileName}`;
-        const { error: uploadError } = await supabase.storage.from('transaction_receipts').upload(filePath, fileBukti);
+        const { data: uploadedUrl, error: uploadError } = await supabase.storage.from('transaction_receipts').upload(filePath, fileBukti);
         if (uploadError) throw uploadError;
-        proofUrl = filePath;
+        proofUrl = uploadedUrl || filePath;
       }
 
       const { error } = await supabase
