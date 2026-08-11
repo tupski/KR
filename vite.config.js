@@ -147,6 +147,13 @@ console.error = function(...args) {
 const configWindowFetchMonkeyPatch = `
 const originalFetch = window.fetch;
 
+// Endpoint yang tidak boleh dianggap fatal oleh fetch wrapper
+const NON_FATAL_URL_PATTERNS = [
+	'notification_hidden',
+	'notification_reads',
+	'/rest/v1/notification',
+];
+
 window.fetch = function(...args) {
 	const url = args[0] instanceof Request ? args[0].url : args[0];
 
@@ -154,6 +161,10 @@ window.fetch = function(...args) {
 	if (url.startsWith('ws:') || url.startsWith('wss:')) {
 		return originalFetch.apply(this, args);
 	}
+
+	// Cek apakah URL termasuk non-fatal (notifikasi)
+	const isNonFatal = typeof url === 'string' &&
+		NON_FATAL_URL_PATTERNS.some(function(pattern) { return url.includes(pattern); });
 
 	return originalFetch.apply(this, args)
 		.then(async response => {
@@ -165,17 +176,29 @@ window.fetch = function(...args) {
 				contentType.includes('application/xhtml+xml');
 
 			if (!response.ok && !isDocumentResponse) {
-					const responseClone = response.clone();
-					const errorFromRes = await responseClone.text();
-					const requestUrl = response.url;
+				const responseClone = response.clone();
+				const errorFromRes = await responseClone.text();
+				const requestUrl = response.url;
+
+				// FIX: Jangan console.error untuk endpoint notifikasi
+				// Cukup log sebagai warning agar tidak dianggap fatal
+				if (isNonFatal) {
+					console.warn('[Fetch] Non-fatal error from ' + requestUrl + ': ' + errorFromRes);
+				} else {
 					console.error(\`Fetch error from \${requestUrl}: \${errorFromRes}\`);
+				}
 			}
 
 			return response;
 		})
 		.catch(error => {
 			if (!url.match(/\.html?$/i)) {
-				console.error(error);
+				// FIX: Jangan console.error untuk endpoint notifikasi
+				if (isNonFatal) {
+					console.warn('[Fetch] Non-fatal fetch error for notification endpoint:', error?.message || error);
+				} else {
+					console.error(error);
+				}
 			}
 
 			throw error;

@@ -65,12 +65,19 @@ export const checkAppUpdate = async (options = { clearStorage: true }) => {
         localStorage.setItem('app_version', newVersion);
       }
 
-      // 4. Reload Paksa
-      console.log('[Update] Melakukan reload paksa aplikasi...');
+      // 4. Notify user dan reload HANYA jika form tidak sedang dirty
+      const isDirty = localStorage.getItem('kr:form-dirty') === '1';
+      if (isDirty) {
+        // Jangan reload otomatis jika user sedang mengisi form.
+        // Tandai ada update pending, reload akan terjadi setelah user submit atau manual refresh.
+        localStorage.setItem('kr:app-update-pending', newVersion);
+        console.log('[Update] Update pending, tidak reload karena form sedang diisi.');
+        return;
+      }
       
       // Beri sedikit delay agar proses storage selesai
       setTimeout(() => {
-        window.location.reload(true);
+        window.location.reload();
       }, 500);
     }
   } catch (error) {

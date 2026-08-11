@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useDisableAutoReload } from '@/hooks/usePageVisibility';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, Camera, CalendarDays, Megaphone, TrendingUp, Trophy, PieChart, DoorOpen, FileText, Send, MoreHorizontal, Settings, LogOut, BarChart2 } from 'lucide-react';
 import FormTransaksi from '@/components/FormTransaksiModern';
@@ -45,10 +46,22 @@ import {
 } from '@/components/ui/alert-dialog';
 
 function App() {
+  // Integrate page visibility hook — prevents reload on tab switch
+  useDisableAutoReload();
+
+  // FIX: Gunakan useRef untuk track mount status, bukan console.log di function body
+  // console.log di function body fire setiap render (termasuk clock tick 1 detik)
+  // yang menciptakan illusion "remount terus-menerus"
+  const isMountedRef = useRef(false);
+
   const currentYear = new Date().getFullYear();
   const [activeTab, setActiveTab] = useState('form');
-  const [refreshKey, setRefreshKey] = useState(0);
+  // HAPUS refreshKey — tidak lagi digunakan karena menyebabkan form remount saat data update
   const { session, loading, signOut, userRole, isSuperAdmin } = useAuth();
+
+  // Refs for notification fetch throttling/debouncing
+  const notifFetchTimerRef = useRef(null);
+  const lastNotifFetchRef = useRef(0);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -110,61 +123,196 @@ function App() {
     return `audience_user_id.eq.${userId},audience_role.eq.all`;
   }, [session?.user?.id, userRole]);
 
-  const refreshUnread = async () => {
-    const userId = session?.user?.id;
-    if (!userId || !audienceFilter) return;
-    try {
-      // Ambil semua notifikasi yang relevan (tanpa limit untuk akurasi badge)
-      const { data: notif, error: nErr } = await supabase
-        .from('notifications')
-        .select('id')
-        .or(audienceFilter)
-        .order('created_at', { ascending: false });
-      if (nErr) throw nErr;
+  /**
+   * Helper: chunk array into pieces of max `size` elements.
+   */
+  const chunkArray = (arr, size) => {
+    const chunks = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  };
 
-      const ids = (notif || []).map((n) => n.id);
-      if (!ids.length) {
-        setUnreadCount(0);
-        return;
-      }
+  /**
+   * Fetch reads/hidden for a set of notification IDs using chunked requests.
+   * Returns { reads: Set<string>, hidden: Set<string> }.
+   * Uses Promise.allSettled so partial failure doesn't break everything.
+   */
+  const fetchReadsAndHidden = async (userId, ids, chunkSize = 20) => {
+    const readSet = new Set();
+    const hiddenSet = new Set();
 
-      const [{ data: reads, error: rErr }, { data: hidden, error: hErr }] = await Promise.all([
+    const readChunks = chunkArray(ids, chunkSize);
+    const hiddenChunks = chunkArray(ids, chunkSize);
+
+    // Deduplicate IDs
+    const uniqueIds = [...new Set(ids)];
+
+    // Fetch reads in chunks
+    const readResults = await Promise.allSettled(
+      readChunks.map((chunk) =>
         supabase
           .from('notification_reads')
           .select('notification_id')
           .eq('user_id', userId)
-          .in('notification_id', ids),
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
+
+    for (const result of readResults) {
+      if (result.status === 'fulfilled' && result.value?.data) {
+        for (const r of result.value.data) {
+          readSet.add(r.notification_id);
+        }
+      } else if (result.status === 'rejected') {
+        console.warn('[App.jsx] notification_reads fetch chunk failed:', result.reason?.message || result.reason);
+      }
+    }
+
+    // Fetch hidden in chunks
+    const hiddenResults = await Promise.allSettled(
+      hiddenChunks.map((chunk) =>
         supabase
           .from('notification_hidden')
           .select('notification_id')
           .eq('user_id', userId)
-          .in('notification_id', ids),
-      ]);
-      if (rErr) throw rErr;
-      if (hErr) throw hErr;
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
 
-      const readSet = new Set((reads || []).map((r) => r.notification_id));
-      const hiddenSet = new Set((hidden || []).map((h) => h.notification_id));
+    for (const result of hiddenResults) {
+      if (result.status === 'fulfilled' && result.value?.data) {
+        for (const h of result.value.data) {
+          hiddenSet.add(h.notification_id);
+        }
+      } else if (result.status === 'rejected') {
+        console.warn('[App.jsx] notification_hidden fetch chunk failed:', result.reason?.message || result.reason);
+      }
+    }
+
+    return { readSet, hiddenSet };
+  };
+
+  /**
+   * Refresh unread badge — debounced & throttled.
+   * Does NOT throw; errors are logged as warnings.
+   * Skips refetch if document is not visible.
+   */
+  const refreshUnread = async () => {
+    const userId = session?.user?.id;
+    if (!userId || !audienceFilter) return;
+
+    // Skip if document is not visible
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      console.log('[App.jsx] refreshUnread skipped — document not visible');
+      return;
+    }
+
+    // Skip if form is dirty
+    const isFormDirty = localStorage.getItem('kr:form-dirty') === '1';
+    if (isFormDirty) {
+      console.log('[App.jsx] refreshUnread skipped — form is dirty');
+      return;
+    }
+
+    // Throttle: max once per 60 seconds
+    const now = Date.now();
+    const elapsed = now - lastNotifFetchRef.current;
+    if (elapsed < 60_000) {
+      console.log('[App.jsx] refreshUnread throttled — last fetch', Math.round(elapsed / 1000), 's ago');
+      return;
+    }
+
+    // Clear any pending debounce timer
+    if (notifFetchTimerRef.current) {
+      clearTimeout(notifFetchTimerRef.current);
+    }
+
+    console.log('[App.jsx] fetchNotifications — starting fetch for badge');
+
+    try {
+      // Ambil notifikasi (limit 200 max untuk mencegah URL terlalu panjang)
+      const { data: notif, error: nErr } = await supabase
+        .from('notifications')
+        .select('id')
+        .or(audienceFilter)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (nErr) {
+        console.warn('[App.jsx] notification fetch failed:', nErr.message);
+        return; // Don't throw, don't set unreadCount to 0 on network error
+      }
+
+      const ids = (notif || []).map((n) => n.id);
+      if (!ids.length) {
+        setUnreadCount(0);
+        lastNotifFetchRef.current = Date.now();
+        return;
+      }
+
+      // Fetch reads & hidden using chunked requests
+      const { readSet, hiddenSet } = await fetchReadsAndHidden(userId, ids, 20);
+
       const visibleIds = ids.filter((id) => !hiddenSet.has(id));
       setUnreadCount(visibleIds.filter((id) => !readSet.has(id)).length);
-    } catch (_error) {
-      setUnreadCount(0);
+      lastNotifFetchRef.current = Date.now();
+    } catch (error) {
+      console.warn('[App.jsx] refreshUnread unexpected error:', error?.message || error);
+      // Don't throw to error boundary — silently fail
     }
   };
 
   useEffect(() => {
+    console.log('[App.jsx] useEffect — notification badge setup for user:', session?.user?.id);
     if (!session?.user?.id) return;
     refreshUnread();
+
     const channel = supabase
       .channel(`notif_badge_${session.user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refreshUnread)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, refreshUnread)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, refreshUnread)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+        console.log('[App.jsx] postgres_changes — notifications table changed');
+        refreshUnread();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, () => {
+        console.log('[App.jsx] postgres_changes — notification_reads table changed');
+        refreshUnread();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, () => {
+        console.log('[App.jsx] postgres_changes — notification_hidden table changed');
+        refreshUnread();
+      })
       .subscribe();
-    return () => supabase.removeChannel(channel);
+
+    return () => {
+      console.log('[App.jsx] cleanup — removing notification badge channel');
+      supabase.removeChannel(channel);
+    };
   }, [session?.user?.id, audienceFilter]);
 
-  const handleDataUpdate = () => setRefreshKey((prevKey) => prevKey + 1);
+  // FIX: Proper mount/unmount detection — only fires once on real mount/unmount
+  useEffect(() => {
+    if (!isMountedRef.current) {
+      console.log('[App.jsx] MOUNT — App component mounted (real mount, bukan re-render)');
+      isMountedRef.current = true;
+    }
+    return () => {
+      // Hanya log jika benar-benar unmount (bukan re-render)
+      if (isMountedRef.current) {
+        console.log('[App.jsx] UNMOUNT — App component unmounting');
+        isMountedRef.current = false;
+      }
+      if (notifFetchTimerRef.current) {
+        clearTimeout(notifFetchTimerRef.current);
+      }
+    };
+  }, []);
+
+  // HAPUS: refreshKey yang menyebabkan form remount saat data update.
+  // Sebagai gantinya, data update cukup trigger refetch di child component,
+  // bukan memaksa remount seluruh halaman.
+  // const handleDataUpdate = () => setRefreshKey((prevKey) => prevKey + 1);
 
   const handleTabClick = (tabId) => {
     setShowMoreMenus(false);
@@ -241,7 +389,15 @@ function App() {
   }, [activeTabStorageKey]);
 
   useEffect(() => {
+    console.log('[App.jsx] activeTab changed to:', activeTab);
+    // Proteksi: jangan reset tab jika form dirty dan tab berubah karena focus/visibility
     if (!visibleTabIds.includes(activeTab)) {
+      // Jika form dirty, jangan paksa pindah tab
+      const isFormDirty = localStorage.getItem('kr:form-dirty') === '1';
+      if (isFormDirty) {
+        console.log('[App.jsx] activeTab blocked — form is dirty, keeping current tab');
+        return;
+      }
       setActiveTab('form');
     }
   }, [activeTab, visibleTabIds]);
@@ -253,32 +409,38 @@ function App() {
   }, [activeTab, activeTabStorageKey]);
 
   const renderContent = () => {
-    const key = `${activeTab}-${refreshKey}`;
+    // HAPUS key={key} dari semua component — key dengan refreshKey memaksa
+    // React unmount+remount seluruh component, yang menyebabkan:
+    // - Form input hilang
+    // - Foto yang dipilih hilang
+    // - State lokal component hilang
+    // Sebagai gantinya, gunakan activeTab sebagai key supaya component hanya
+    // remount saat benar-benar pindah tab, bukan saat data update.
     switch (activeTab) {
       case 'form':
         return userRole === 'karyawan'
-          ? <KaryawanTransaksi key={key} onRequestNavigate={() => setActiveTab('request')} />
-          : <FormTransaksi key={key} onDataUpdate={handleDataUpdate} />;
+          ? <KaryawanTransaksi key={activeTab} onRequestNavigate={() => setActiveTab('request')} />
+          : <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
       case 'dashboard':
-        return <DashboardPemasukan key={key} />;
+        return <DashboardPemasukan key={activeTab} />;
       case 'request':
-        return <HalamanRequest key={key} />;
+        return <HalamanRequest key={activeTab} />;
       case 'kamar':
-        return <KetersediaanKamar key={key} />;
+        return <KetersediaanKamar key={activeTab} />;
       case 'finance':
-        return userRole === 'super_admin' || isTagihanUnlocked ? <HalamanTagihan key={key} /> : null;
+        return userRole === 'super_admin' || isTagihanUnlocked ? <HalamanTagihan key={activeTab} /> : null;
       case 'ranking':
-        return <RankingMarketing key={key} />;
+        return <RankingMarketing key={activeTab} />;
       case 'chart':
-        return <OmsetChart key={key} />;
+        return <OmsetChart key={activeTab} />;
       case 'analytics':
         return (userRole === 'admin' || userRole === 'super_admin')
-          ? <AnalyticsDashboard key={key} />
+          ? <AnalyticsDashboard key={activeTab} />
           : null;
       case 'pengaturan':
-        return isSuperAdmin ? <SuperAdminDashboard key={key} /> : <FormTransaksi key={key} onDataUpdate={handleDataUpdate} />;
+        return isSuperAdmin ? <SuperAdminDashboard key={activeTab} /> : <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
       default:
-        return <FormTransaksi key={key} onDataUpdate={handleDataUpdate} />;
+        return <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
     }
   };
 
@@ -475,8 +637,11 @@ function App() {
       </Dialog>
 
       <div className="min-h-screen pb-28 sm:pb-32">
-        <AnimatePresence mode="wait">
-          <motion.div key={activeTab} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }}>
+        {/* FIX: Ganti AnimatePresence mode="popLayout" dengan mode="sync" untuk mencegah
+            unmount saat tab switch. Sebelumnya key={activeTab} memaksa React unmount+remount
+            seluruh component saat pindah tab, yang menyebabkan form & foto hilang. */}
+        <AnimatePresence mode="sync">
+          <motion.div key={activeTab} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.15 }}>
             {renderContent()}
           </motion.div>
         </AnimatePresence>

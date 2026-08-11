@@ -179,6 +179,8 @@ const FormTransaksiModern = ({
       buktiTransferFile: null,
     };
     localStorage.setItem(draftKey, JSON.stringify(payload));
+    // Tandai form dirty agar checkAppUpdate tidak reload otomatis
+    localStorage.setItem('kr:form-dirty', '1');
   }, [draftKey, formData]);
 
   useEffect(() => {
@@ -492,7 +494,17 @@ const FormTransaksiModern = ({
           ? `ID: ${insertedTx.id} • Project: ${supabaseProjectRef}`
           : `Project: ${supabaseProjectRef}`,
       });
+      // Hapus form-dirty flag dan cek apakah ada pending app update
+      localStorage.removeItem('kr:form-dirty');
       resetForm();
+
+      // Jika ada pending update, reload sekarang setelah form berhasil disubmit
+      const pendingVersion = localStorage.getItem('kr:app-update-pending');
+      if (pendingVersion) {
+        localStorage.removeItem('kr:app-update-pending');
+        setTimeout(() => window.location.reload(), 500);
+      }
+
       onDataUpdate?.();
       onSuccess?.();
     } catch (error) {

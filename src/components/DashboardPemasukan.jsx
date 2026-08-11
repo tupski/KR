@@ -198,15 +198,22 @@ const DashboardPemasukan = () => {
       }
     }, 15000);
 
+    // Debounce visibility refetch agar tidak trigger instan saat alt+tab
+    let visibilityTimer = null;
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshDashboardData();
+        if (visibilityTimer) clearTimeout(visibilityTimer);
+        // Tunda 3 detik agar user tidak lihat flicker saat kembali ke tab
+        visibilityTimer = setTimeout(() => {
+          refreshDashboardData();
+        }, 3000);
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       window.clearInterval(intervalId);
+      if (visibilityTimer) clearTimeout(visibilityTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       supabase.removeChannel(channel);
     };
@@ -311,14 +318,14 @@ const DashboardPemasukan = () => {
     const komisi = formatRupiahNumber(Number(transaksi.marketing_fee || 0));
     const depositCash = Number(transaksi.deposit_cash || 0);
     const depositTransfer = Number(transaksi.deposit_transfer || 0);
-    
+
     const depositLine = depositCash > 0 || depositTransfer > 0
       ? `${depositCash > 0 ? `Tunai ${formatRupiahNumber(depositCash)} ` : ''}${depositTransfer > 0 ? `Transfer ${formatRupiahNumber(depositTransfer)}` : ''}`.trim()
       : null;
 
     const checkInAt = transaksi.checkin_at || transaksi.created_at;
     const checkoutAt = transaksi.checkout_at || new Date(new Date(checkInAt).getTime() + (Number(transaksi.rental_duration) || 1) * 60 * 60 * 1000).toISOString();
-    
+
     const customerName = capitalizeWords(transaksi.customer_name);
     const sewaDisplay = getSewaDisplay(transaksi);
 
@@ -417,149 +424,149 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
           {activeMainTab === 'umum' && (
             <>
               <div className="glassmorphic-card space-y-4 p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 font-bold text-gray-800"><Calendar className="h-5 w-5 text-blue-500" /> Filter Data</h2>
-              <Button onClick={handleExport} size="sm" variant="outline" className="border-green-300 bg-green-100 text-green-800 hover:bg-green-200">
-                <Download className="mr-2 h-4 w-4" /> Ekspor
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              {['harian', 'bulanan', 'rentang'].map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setFilterType(tab)}
-                  className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${filterType === tab ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white' : 'bg-gray-100 text-gray-900'}`}
-                >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            {filterType === 'harian' && <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-xl border-2 px-4 py-2.5 text-gray-900" />}
-            {filterType === 'bulanan' && <input type="month" value={monthInputValue} onChange={(e) => setStartDate(`${e.target.value}-01`)} className="w-full rounded-xl border-2 px-4 py-2.5 text-gray-900" />}
-            {filterType === 'rentang' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-xl border-2 px-3 py-2.5 text-gray-900" />
-                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full rounded-xl border-2 px-3 py-2.5 text-gray-900" />
+                <div className="flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 font-bold text-gray-800"><Calendar className="h-5 w-5 text-blue-500" /> Filter Data</h2>
+                  <Button onClick={handleExport} size="sm" variant="outline" className="border-green-300 bg-green-100 text-green-800 hover:bg-green-200">
+                    <Download className="mr-2 h-4 w-4" /> Ekspor
+                  </Button>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full rounded-xl border-2 px-2 py-2.5 text-sm text-gray-900" />
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full rounded-xl border-2 px-2 py-2.5 text-sm text-gray-900" />
+                <div className="flex gap-2">
+                  {['harian', 'bulanan', 'rentang'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setFilterType(tab)}
+                      className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${filterType === tab ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white' : 'bg-gray-100 text-gray-900'}`}
+                    >
+                      {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    </button>
+                  ))}
                 </div>
-              </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <select value={lokasi} onChange={(e) => setLokasi(e.target.value)} className="w-full rounded-xl border-2 bg-white px-3 py-2.5 text-sm text-gray-900">
-                {lokasiOptions.map((lok) => (
-                  <option key={lok} value={lok === 'Semua Lokasi' ? 'semua' : lok}>{lok}</option>
-                ))}
-              </select>
-              <select value={shift} onChange={(e) => setShift(e.target.value)} className="w-full rounded-xl border-2 bg-white px-3 py-2.5 text-sm text-gray-900">
-                {['Semua Shift', 'Pagi', 'Malam', 'Long Shift'].map((s) => (
-                  <option key={s} value={s === 'Semua Shift' ? 'semua' : s}>{s}</option>
-                ))}
-              </select>
-            </div>
-            <input
-              type="text"
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="w-full rounded-xl border-2 px-3 py-2.5 text-sm text-gray-900"
-              placeholder="Cari customer, marketing, input oleh, lokasi atau kamar..."
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="glassmorphic-card col-span-2 p-5">
-              <h3 className="text-base font-bold text-blue-900">Total Transaksi Hari Ini</h3>
-              <p className="text-2xl font-extrabold leading-tight text-blue-700 sm:text-3xl">{stats.transaksiHariIni} <span className="text-base">transaksi</span></p>
-            </div>
-            <div className="glassmorphic-card p-4">
-              <h3 className="text-base font-bold text-green-900">Tunai (Filter)</h3>
-              <p className="break-all text-xl font-extrabold leading-tight text-green-700 sm:text-2xl">{formatRupiah(stats.tunai)}</p>
-            </div>
-            <div className="glassmorphic-card p-4">
-              <h3 className="text-base font-bold text-cyan-900">Transfer (Filter)</h3>
-              <p className="break-all text-xl font-extrabold leading-tight text-cyan-700 sm:text-2xl">{formatRupiah(stats.transfer)}</p>
-            </div>
-          </div>
-
-          <div className="glassmorphic-card p-5">
-            <h3 className="text-base font-bold text-red-900">Total Pemasukan (Filter)</h3>
-            <p className="break-all text-2xl font-extrabold leading-tight text-red-700 sm:text-3xl">{formatRupiah(stats.total)}</p>
-            <p className="mt-1 text-sm">{stats.jumlahTransaksi} total transaksi</p>
-          </div>
-
-          <div className="glassmorphic-card p-5">
-            <h2 className="mb-4 font-bold text-gray-800">Detail Transaksi</h2>
-            <div className="space-y-3">
-              {paginatedTransaksi.map((transaksi) => (
-                <div key={transaksi.id} className="rounded-2xl border bg-white/70 p-4">
-                  <div className="mb-3 flex items-start justify-between gap-2">
-                    <h3 className="font-bold text-gray-800">{capitalizeWords(transaksi.customer_name)}</h3>
-                    <p className="text-right text-base font-extrabold text-orange-600 sm:text-lg">{formatRupiah((transaksi.cash_amount || 0) + (transaksi.transfer_amount || 0))}</p>
-                  </div>
-                  <div className="mb-3 space-y-1 border-y py-2 text-xs text-gray-700">
-                    <p>Lokasi: {transaksi.apartment_location} - Kamar {transaksi.room_number}</p>
-                    <p>Sewa: {getSewaDisplay(transaksi)}</p>
-                    <p>Check-in: {formatWhatsappDateTime(transaksi.checkin_at || transaksi.created_at)}</p>
-                    {transaksi.marketing_name && <p>Marketing: {transaksi.marketing_name}</p>}
-                    {transaksi.marketing_fee > 0 && <p>Fee: {formatRupiah(transaksi.marketing_fee)}</p>}
-                    {transaksi.input_by && (
-                      <p>
-                        <UserCheck className="mr-1 inline h-3 w-3" /> 
-                        Diinput oleh: {transaksi.input_by} (Shift: {transaksi.shift || '-'})
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1 text-xs">
-                      {(transaksi.cash_amount || 0) > 0 && <p className="font-semibold text-green-600">Tunai: {formatRupiah(transaksi.cash_amount)}</p>}
-                      {(transaksi.transfer_amount || 0) > 0 && <p className="font-semibold text-blue-600">Transfer: {formatRupiah(transaksi.transfer_amount)} {transaksi.transfer_to ? `(ke ${transaksi.transfer_to})` : ''}</p>}
+                {filterType === 'harian' && <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-xl border-2 px-4 py-2.5 text-gray-900" />}
+                {filterType === 'bulanan' && <input type="month" value={monthInputValue} onChange={(e) => setStartDate(`${e.target.value}-01`)} className="w-full rounded-xl border-2 px-4 py-2.5 text-gray-900" />}
+                {filterType === 'rentang' && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-xl border-2 px-3 py-2.5 text-gray-900" />
+                      <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full rounded-xl border-2 px-3 py-2.5 text-gray-900" />
                     </div>
-                    <div className="flex gap-1">
-                      {transaksi.transfer_proof_url && (
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button size="icon" variant="outline" className="h-8 w-8"><ImageIcon className="h-4 w-4" /></Button>
-                          </DialogTrigger>
-                          <DialogContent className="bg-black/80">
-                            <DialogHeader>
-                              <DialogTitle className="text-white">Bukti Transfer</DialogTitle>
-                              <DialogDescription className="text-gray-300">Pratinjau gambar bukti transfer transaksi.</DialogDescription>
-                            </DialogHeader>
-                            <img src={resolveStorageUrl(transaksi.transfer_proof_url)} alt="Bukti Transfer" className="w-full rounded-lg" />
-                          </DialogContent>
-                        </Dialog>
-                      )}
-                      <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => handleEditClick(transaksi)}><Edit className="h-4 w-4" /></Button>
-                      <Button size="icon" variant="destructive" className="h-8 w-8" onClick={() => handleDelete(transaksi.id)}><Trash2 className="h-4 w-4" /></Button>
-                      <Button size="icon" onClick={() => handleShare(transaksi)} className="h-8 w-8 bg-green-500"><Share2 className="h-4 w-4" /></Button>
+                    <div className="grid grid-cols-2 gap-3">
+                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full rounded-xl border-2 px-2 py-2.5 text-sm text-gray-900" />
+                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full rounded-xl border-2 px-2 py-2.5 text-sm text-gray-900" />
                     </div>
                   </div>
-                </div>
-              ))}
-              {paginatedTransaksi.length === 0 && (
-                <p className="py-6 text-center text-sm text-gray-500">Tidak ada transaksi pada filter ini.</p>
-              )}
-            </div>
+                )}
 
-            {totalPages > 1 && activeMainTab === 'umum' && (
-              <div className="mt-4 flex items-center justify-between">
-                <Button size="sm" variant="outline" disabled={currentPage <= 1} onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}>
-                  <ChevronLeft className="mr-1 h-4 w-4" /> Sebelumnya
-                </Button>
-                <p className="text-xs text-gray-600">Halaman {currentPage} dari {totalPages}</p>
-                <Button size="sm" variant="outline" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}>
-                  Berikutnya <ChevronRight className="ml-1 h-4 w-4" />
-                </Button>
+                <div className="grid grid-cols-2 gap-3">
+                  <select value={lokasi} onChange={(e) => setLokasi(e.target.value)} className="w-full rounded-xl border-2 bg-white px-3 py-2.5 text-sm text-gray-900">
+                    {lokasiOptions.map((lok) => (
+                      <option key={lok} value={lok === 'Semua Lokasi' ? 'semua' : lok}>{lok}</option>
+                    ))}
+                  </select>
+                  <select value={shift} onChange={(e) => setShift(e.target.value)} className="w-full rounded-xl border-2 bg-white px-3 py-2.5 text-sm text-gray-900">
+                    {['Semua Shift', 'Pagi', 'Malam', 'Long Shift'].map((s) => (
+                      <option key={s} value={s === 'Semua Shift' ? 'semua' : s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  className="w-full rounded-xl border-2 px-3 py-2.5 text-sm text-gray-900"
+                  placeholder="Cari customer, marketing, input oleh, lokasi atau kamar..."
+                />
               </div>
-            )}
-            
-          </div>
-          </>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="glassmorphic-card col-span-2 p-5">
+                  <h3 className="text-base font-bold text-blue-900">Total Transaksi Hari Ini</h3>
+                  <p className="text-2xl font-extrabold leading-tight text-blue-700 sm:text-3xl">{stats.transaksiHariIni} <span className="text-base">transaksi</span></p>
+                </div>
+                <div className="glassmorphic-card p-4">
+                  <h3 className="text-base font-bold text-green-900">Tunai (Filter)</h3>
+                  <p className="break-all text-xl font-extrabold leading-tight text-green-700 sm:text-2xl">{formatRupiah(stats.tunai)}</p>
+                </div>
+                <div className="glassmorphic-card p-4">
+                  <h3 className="text-base font-bold text-cyan-900">Transfer (Filter)</h3>
+                  <p className="break-all text-xl font-extrabold leading-tight text-cyan-700 sm:text-2xl">{formatRupiah(stats.transfer)}</p>
+                </div>
+              </div>
+
+              <div className="glassmorphic-card p-5">
+                <h3 className="text-base font-bold text-red-900">Total Pemasukan (Filter)</h3>
+                <p className="break-all text-2xl font-extrabold leading-tight text-red-700 sm:text-3xl">{formatRupiah(stats.total)}</p>
+                <p className="mt-1 text-sm">{stats.jumlahTransaksi} total transaksi</p>
+              </div>
+
+              <div className="glassmorphic-card p-5">
+                <h2 className="mb-4 font-bold text-gray-800">Detail Transaksi</h2>
+                <div className="space-y-3">
+                  {paginatedTransaksi.map((transaksi) => (
+                    <div key={transaksi.id} className="rounded-2xl border bg-white/70 p-4">
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        <h3 className="font-bold text-gray-800">{capitalizeWords(transaksi.customer_name)}</h3>
+                        <p className="text-right text-base font-extrabold text-orange-600 sm:text-lg">{formatRupiah((transaksi.cash_amount || 0) + (transaksi.transfer_amount || 0))}</p>
+                      </div>
+                      <div className="mb-3 space-y-1 border-y py-2 text-xs text-gray-700">
+                        <p>Lokasi: {transaksi.apartment_location} - Kamar {transaksi.room_number}</p>
+                        <p>Sewa: {getSewaDisplay(transaksi)}</p>
+                        <p>Check-in: {formatWhatsappDateTime(transaksi.checkin_at || transaksi.created_at)}</p>
+                        {transaksi.marketing_name && <p>Marketing: {transaksi.marketing_name}</p>}
+                        {transaksi.marketing_fee > 0 && <p>Fee: {formatRupiah(transaksi.marketing_fee)}</p>}
+                        {transaksi.input_by && (
+                          <p>
+                            <UserCheck className="mr-1 inline h-3 w-3" />
+                            Diinput oleh: {transaksi.input_by} (Shift: {transaksi.shift || '-'})
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1 text-xs">
+                          {(transaksi.cash_amount || 0) > 0 && <p className="font-semibold text-green-600">Tunai: {formatRupiah(transaksi.cash_amount)}</p>}
+                          {(transaksi.transfer_amount || 0) > 0 && <p className="font-semibold text-blue-600">Transfer: {formatRupiah(transaksi.transfer_amount)} {transaksi.transfer_to ? `(ke ${transaksi.transfer_to})` : ''}</p>}
+                        </div>
+                        <div className="flex gap-1">
+                          {transaksi.transfer_proof_url && (
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button size="icon" variant="outline" className="h-8 w-8"><ImageIcon className="h-4 w-4" /></Button>
+                              </DialogTrigger>
+                              <DialogContent className="bg-black/80">
+                                <DialogHeader>
+                                  <DialogTitle className="text-white">Bukti Transfer</DialogTitle>
+                                  <DialogDescription className="text-gray-300">Pratinjau gambar bukti transfer transaksi.</DialogDescription>
+                                </DialogHeader>
+                                <img src={resolveStorageUrl(transaksi.transfer_proof_url)} alt="Bukti Transfer" className="w-full rounded-lg" />
+                              </DialogContent>
+                            </Dialog>
+                          )}
+                          <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => handleEditClick(transaksi)}><Edit className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="destructive" className="h-8 w-8" onClick={() => handleDelete(transaksi.id)}><Trash2 className="h-4 w-4" /></Button>
+                          <Button size="icon" onClick={() => handleShare(transaksi)} className="h-8 w-8 bg-green-500"><Share2 className="h-4 w-4" /></Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {paginatedTransaksi.length === 0 && (
+                    <p className="py-6 text-center text-sm text-gray-500">Tidak ada transaksi pada filter ini.</p>
+                  )}
+                </div>
+
+                {totalPages > 1 && activeMainTab === 'umum' && (
+                  <div className="mt-4 flex items-center justify-between">
+                    <Button size="sm" variant="outline" disabled={currentPage <= 1} onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}>
+                      <ChevronLeft className="mr-1 h-4 w-4" /> Sebelumnya
+                    </Button>
+                    <p className="text-xs text-gray-600">Halaman {currentPage} dari {totalPages}</p>
+                    <Button size="sm" variant="outline" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}>
+                      Berikutnya <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+
+              </div>
+            </>
           )}
 
           {activeMainTab === 'deposit' && (

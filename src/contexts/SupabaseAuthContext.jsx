@@ -93,7 +93,7 @@ export const AuthProvider = ({ children }) => {
 
     init();
     return () => { mounted = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // hanya sekali saat mount
 
   // ── Auth state changes (setelah initial load) ─────────────────────────────
@@ -169,6 +169,8 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {
       console.error('Signout error:', e);
     } finally {
+      // Jangan reload — biarkan onAuthStateChange('SIGNED_OUT') handle redirect
+      // supaya form state tidak hilang dan tidak ada flash reload
       const itemsToKeep = ['app_version'];
       Object.keys(localStorage).forEach(key => {
         if (!itemsToKeep.includes(key)) localStorage.removeItem(key);
@@ -178,9 +180,9 @@ export const AuthProvider = ({ children }) => {
         try {
           const cacheNames = await caches.keys();
           await Promise.all(cacheNames.map(name => caches.delete(name)));
-        } catch (e) {}
+        } catch (e) { }
       }
-      window.location.reload();
+      // HAPUS window.location.reload() — auth context sudah handle SIGNED_OUT event
     }
   }, []);
 

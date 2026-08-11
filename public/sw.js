@@ -12,7 +12,10 @@ const APP_SHELL = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  // HAPUS self.skipWaiting() — biarkan SW baru menunggu sampai semua tab ditutup.
+  // skipWaiting() bisa menyebabkan halaman reload otomatis saat SW baru activate,
+  // yang menghilangkan form state yang belum tersimpan.
+  // SW baru akan activate saat user menutup semua tab dan buka ulang.
 });
 
 self.addEventListener('activate', (event) => {

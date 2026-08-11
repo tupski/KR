@@ -69,6 +69,55 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
   const audienceFilter = useMemo(() => buildAudienceFilter(userId, userRole), [userId, userRole]);
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
+  /**
+   * Helper: chunk array dan fetch reads/hidden secara bertahap.
+   * Menggunakan Promise.allSettled agar partial failure tidak menghancurkan semua data.
+   */
+  const fetchReadsAndHiddenChunked = async (uids, nIds, chunkSize = 20) => {
+    const readSet = new Set();
+    const hiddenSet = new Set();
+    const uniqueIds = [...new Set(nIds)];
+
+    const chunkArr = (arr, sz) => {
+      const chunks = [];
+      for (let i = 0; i < arr.length; i += sz) chunks.push(arr.slice(i, i + sz));
+      return chunks;
+    };
+
+    const readChunks = chunkArr(uniqueIds, chunkSize);
+    const hiddenChunks = chunkArr(uniqueIds, chunkSize);
+
+    const readResults = await Promise.allSettled(
+      readChunks.map((chunk) =>
+        supabase.from('notification_reads').select('notification_id').eq('user_id', uids)
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
+    for (const r of readResults) {
+      if (r.status === 'fulfilled' && r.value?.data) {
+        for (const row of r.value.data) readSet.add(row.notification_id);
+      } else if (r.status === 'rejected') {
+        console.warn('[NotificationsInbox] notification_reads chunk failed:', r.reason?.message);
+      }
+    }
+
+    const hiddenResults = await Promise.allSettled(
+      hiddenChunks.map((chunk) =>
+        supabase.from('notification_hidden').select('notification_id').eq('user_id', uids)
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
+    for (const r of hiddenResults) {
+      if (r.status === 'fulfilled' && r.value?.data) {
+        for (const row of r.value.data) hiddenSet.add(row.notification_id);
+      } else if (r.status === 'rejected') {
+        console.warn('[NotificationsInbox] notification_hidden chunk failed:', r.reason?.message);
+      }
+    }
+
+    return { readSet, hiddenSet };
+  };
+
   const load = async () => {
     if (!userId || !audienceFilter) return;
     setLoading(true);
@@ -87,24 +136,19 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
       setTotalItems(count || 0);
 
       const ids = (notif || []).map((n) => n.id);
-      const [{ data: reads, error: readsErr }, { data: hidden, error: hiddenErr }] = await Promise.all([
-        supabase.from('notification_reads').select('notification_id').eq('user_id', userId)
-          .in('notification_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
-        supabase.from('notification_hidden').select('notification_id').eq('user_id', userId)
-          .in('notification_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
-      ]);
-      if (readsErr) throw readsErr;
-      if (hiddenErr) throw hiddenErr;
+      const { readSet: readIds, hiddenSet: hiddenIds } = await fetchReadsAndHiddenChunked(userId, ids, 20);
 
-      const readIds = new Set((reads || []).map((r) => r.notification_id));
-      const hiddenIds = new Set((hidden || []).map((h) => h.notification_id));
       const filtered = (notif || []).filter((n) => !hiddenIds.has(n.id));
       const unread = new Set(filtered.map((n) => n.id).filter((id) => !readIds.has(id)));
 
       setItems(filtered);
       setUnreadSet(unread);
     } catch (error) {
-      toast({ title: 'Gagal memuat notifikasi', description: error.message || 'Coba buka lagi.', variant: 'destructive' });
+      console.warn('[NotificationsInbox] load failed:', error?.message || error);
+      // Jangan tampilkan toast destructive untuk error non-fatal notifikasi
+      if (error?.message && !error.message.includes('notification')) {
+        toast({ title: 'Gagal memuat notifikasi', description: error.message || 'Coba buka lagi.', variant: 'destructive' });
+      }
     } finally {
       setLoading(false);
     }
@@ -197,9 +241,8 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
           <button
             type="button"
             onClick={() => setOnlyUnread((v) => !v)}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-              onlyUnread ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${onlyUnread ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
           >
             <Filter className="h-3.5 w-3.5" />
             {onlyUnread ? 'Belum dibaca' : 'Semua'}
@@ -233,9 +276,8 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
                 key={n.id}
                 type="button"
                 onClick={() => markRead(n.id)}
-                className={`w-full px-4 py-3.5 text-left transition ${
-                  unread ? 'bg-blue-50 hover:bg-blue-100' : 'bg-white hover:bg-slate-50'
-                }`}
+                className={`w-full px-4 py-3.5 text-left transition ${unread ? 'bg-blue-50 hover:bg-blue-100' : 'bg-white hover:bg-slate-50'
+                  }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">

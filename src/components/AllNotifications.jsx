@@ -54,6 +54,55 @@ export default function AllNotifications({ open, onOpenChange }) {
 
   const audienceFilter = useMemo(() => buildAudienceFilter(userId, userRole), [userId, userRole]);
 
+  /**
+   * Helper: chunk array dan fetch reads/hidden secara bertahap.
+   * Menggunakan Promise.allSettled agar partial failure tidak menghancurkan semua data.
+   */
+  const fetchReadsAndHiddenChunked = async (uids, nIds, chunkSize = 20) => {
+    const readSet = new Set();
+    const hiddenSet = new Set();
+    const uniqueIds = [...new Set(nIds)];
+
+    const chunkArr = (arr, sz) => {
+      const chunks = [];
+      for (let i = 0; i < arr.length; i += sz) chunks.push(arr.slice(i, i + sz));
+      return chunks;
+    };
+
+    const readChunks = chunkArr(uniqueIds, chunkSize);
+    const hiddenChunks = chunkArr(uniqueIds, chunkSize);
+
+    const readResults = await Promise.allSettled(
+      readChunks.map((chunk) =>
+        supabase.from('notification_reads').select('notification_id').eq('user_id', uids)
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
+    for (const r of readResults) {
+      if (r.status === 'fulfilled' && r.value?.data) {
+        for (const row of r.value.data) readSet.add(row.notification_id);
+      } else if (r.status === 'rejected') {
+        console.warn('[AllNotifications] notification_reads chunk failed:', r.reason?.message);
+      }
+    }
+
+    const hiddenResults = await Promise.allSettled(
+      hiddenChunks.map((chunk) =>
+        supabase.from('notification_hidden').select('notification_id').eq('user_id', uids)
+          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
+      )
+    );
+    for (const r of hiddenResults) {
+      if (r.status === 'fulfilled' && r.value?.data) {
+        for (const row of r.value.data) hiddenSet.add(row.notification_id);
+      } else if (r.status === 'rejected') {
+        console.warn('[AllNotifications] notification_hidden chunk failed:', r.reason?.message);
+      }
+    }
+
+    return { readSet, hiddenSet };
+  };
+
   const load = async () => {
     if (!userId || !audienceFilter) return;
     setLoading(true);
@@ -71,23 +120,7 @@ export default function AllNotifications({ open, onOpenChange }) {
 
       const ids = (notif || []).map((n) => n.id);
 
-      const [{ data: reads, error: readsErr }, { data: hidden, error: hiddenErr }] = await Promise.all([
-        supabase
-          .from('notification_reads')
-          .select('notification_id')
-          .eq('user_id', userId)
-          .in('notification_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
-        supabase
-          .from('notification_hidden')
-          .select('notification_id')
-          .eq('user_id', userId)
-          .in('notification_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
-      ]);
-      if (readsErr) throw readsErr;
-      if (hiddenErr) throw hiddenErr;
-
-      const readIds = new Set((reads || []).map((r) => r.notification_id));
-      const hiddenIds = new Set((hidden || []).map((h) => h.notification_id));
+      const { readSet: readIds, hiddenSet: hiddenIds } = await fetchReadsAndHiddenChunked(userId, ids, 20);
 
       const filtered = (notif || []).filter((n) => !hiddenIds.has(n.id));
       const unread = new Set(filtered.map((n) => n.id).filter((id) => !readIds.has(id)));
@@ -96,11 +129,15 @@ export default function AllNotifications({ open, onOpenChange }) {
       setUnreadSet(unread);
       setHiddenSet(hiddenIds);
     } catch (error) {
-      toast({
-        title: 'Gagal memuat notifikasi',
-        description: error.message || 'Coba buka lagi beberapa saat.',
-        variant: 'destructive',
-      });
+      console.warn('[AllNotifications] load failed:', error?.message || error);
+      // Jangan tampilkan toast destructive untuk error non-fatal notifikasi
+      if (error?.message && !error.message.includes('notification')) {
+        toast({
+          title: 'Gagal memuat notifikasi',
+          description: error.message || 'Coba buka lagi beberapa saat.',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setLoading(false);
     }
