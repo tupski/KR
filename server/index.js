@@ -17,19 +17,56 @@ import installRoutes from './routes/installRoutes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// T5: maintenance mode dari system_settings (cache 30s). Exempt: login, health, install/*, super_admin.
+export function maintenanceMiddleware({ pool, cacheMs = 30_000 } = {}) {
+  let cached = null;
+  let cachedAt = 0;
+  return async (req, res, next) => {
+    if (!req.path.startsWith('/api/') || req.path.startsWith('/api/install/') ||
+        req.path === '/api/auth/login' || req.path === '/api/health') {
+      return next();
+    }
+    const now = Date.now();
+    if (!cached || now - cachedAt > cacheMs) {
+      try {
+        const { rows } = await pool.query(`SELECT value FROM system_settings WHERE key = 'maintenance_mode'`);
+        cached = rows[0]?.value === true || rows[0]?.value === 'true';
+        cachedAt = now;
+      } catch {
+        cached = false; // DB belum siap → tidak blokir boot/install path
+      }
+    }
+    if (cached && req.user?.role !== 'super_admin') {
+      return res.status(503).json({ error: 'Maintenance mode aktif' });
+    }
+    return next();
+  };
+}
+
 export function createApp({ cfg = loadConfig(), pool = createPool(cfg.databaseUrl), install } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(cors({ origin: true, credentials: true }));
+  const corsOrigins = (cfg.corsOrigins || []).map((o) => o.toLowerCase());
+  const corsOptions = {
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // same-origin / non-browser
+      const host = origin.replace(/^https?:\/\//, '').replace(/:\d+$/, '').toLowerCase();
+      if (corsOrigins.includes(origin.toLowerCase()) || corsOrigins.includes(host)) return cb(null, true);
+      return cb(null, false); // tolak: tanpa CORS headers
+    },
+    credentials: true,
+  };
+  app.use(cors(corsOptions));
   app.use(express.json({ limit: cfg.bodyLimit }));
   app.use(cookieParser());
   app.use(csrfGuard);
+  app.use(maintenanceMiddleware({ pool }));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRoutes({ pool, cfg }));
   app.use('/api/db', dbRoutes({ pool, cfg }));
   app.use('/api/rpc', rpcBridge({ pool, cfg }));
-  app.use('/api/storage', storageRoutes);
+  app.use('/api/storage', storageRoutes({ pool, cfg }));
   app.use('/api/install', installRoutes({ configDir: cfg.configDir, ...(install || {}) }));
 
   const dist = path.join(root, cfg.distDir);
@@ -49,7 +86,9 @@ export function createApp({ cfg = loadConfig(), pool = createPool(cfg.databaseUr
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
-    res.status(err.status || 500).json({ error: err.message || 'Internal error' });
+    const status = err.status || 500;
+    if (status >= 500) console.error(err);
+    res.status(status).json({ error: status >= 500 ? 'Internal server error' : (err.message || 'Bad request') });
   });
 
   return app;

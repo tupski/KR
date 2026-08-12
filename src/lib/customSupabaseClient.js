@@ -17,7 +17,7 @@ let projectRef;
 let usedFallback = false;
 
 if (IS_SELF_HOST) {
-  client = api;
+  client = apiClient.default;
   projectRef = 'selfhost';
 } else {
   usedFallback = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY;

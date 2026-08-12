@@ -262,13 +262,22 @@ export const auth = {
     return { data: r.data, error: r.error };
   },
   async updateUser(patch) {
-    // Backend has no PATCH /api/auth/me endpoint yet (phase_02).
-    // Self-host: profile updates go through .from('user_profiles').update().
-    const user = (typeof window !== 'undefined' && window.__kr_user) || {};
-    const meta = { ...(user.user_metadata || {}), ...(patch?.data || {}) };
-    if (typeof window !== 'undefined') window.__kr_user = { ...user, user_metadata: meta };
+    // Self-host: profil → PATCH /api/auth/me; data (metadata) → tetap lokal (kompatibilitas).
+    if (patch?.data) {
+      const user = (typeof window !== 'undefined' && window.__kr_user) || {};
+      const meta = { ...(user.user_metadata || {}), ...patch.data };
+      if (typeof window !== 'undefined') window.__kr_user = { ...user, user_metadata: meta };
+      emitAuth('USER_UPDATED', { user: window.__kr_user || null });
+      return { data: { user: window.__kr_user || null }, error: null };
+    }
+    const r = await http('PATCH', '/api/auth/me', patch || {});
+    if (r.error) return { data: null, error: r.error };
+    if (typeof window !== 'undefined') window.__kr_user = r.data?.user || null;
     emitAuth('USER_UPDATED', { user: window.__kr_user || null });
-    return { data: { user: window.__kr_user || null }, error: null };
+    return { data: { user: r.data?.user || null }, error: r.error };
+  },
+  async changePassword({ oldPassword, newPassword }) {
+    return http('POST', '/api/auth/change-password', { old_password: oldPassword, new_password: newPassword });
   },
   onAuthStateChange(cb) {
     authListeners.add(cb);

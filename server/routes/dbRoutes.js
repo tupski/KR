@@ -1,6 +1,7 @@
 // DB CRUD bridge: whitelist tabel + kolom, prepared statements, pagination wajib.
 import { Router } from 'express';
 import { requireAuth } from '../auth.js';
+import { sendError } from '../errors.js';
 
 export const ALLOWED_TABLES = new Set([
   'transactions', 'pengeluaran', 'tagihan_bulanan', 'tagihan_fee_lunas', 'tagihan_fee_lunas_items',
@@ -10,13 +11,23 @@ export const ALLOWED_TABLES = new Set([
   'activity_logs', 'system_settings', 'role_menu_visibility', 'recurring_unit_bills',
 ]);
 
-const COL_RE = /^[a-zA-Z0-9_.,\s]+$/;
+const COL_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function assertCol(col, label) {
+  if (!col || !COL_RE.test(String(col))) {
+    const err = new Error(`invalid ${label}: ${String(col)}`);
+    err.status = 400;
+    err.isValidation = true;
+    throw err;
+  }
+}
 
 function sanitizeColumns(select) {
   if (!select) return '*';
-  const cols = String(select).trim();
-  if (!cols || !COL_RE.test(cols)) throw new Error('invalid select');
-  return cols;
+  const parts = String(select).split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return '*';
+  for (const c of parts) assertCol(c, 'select col');
+  return parts.join(',');
 }
 
 // filter=<json> [{ col, op: eq|gte|lte|lt|gt|in|is|like, value }]
@@ -26,7 +37,7 @@ function buildWhere(filter) {
   const clauses = [];
   const params = [];
   for (const f of items) {
-    if (!f.col || !COL_RE.test(String(f.col))) throw new Error('invalid filter col');
+    assertCol(f.col, 'filter col');
     if (f.op === 'in') {
       const arr = Array.isArray(f.value) ? f.value : [f.value];
       const ph = arr.map((_, i) => `$${params.length + i + 1}`).join(',');
@@ -50,13 +61,13 @@ function parseRange(range) {
 
 function buildOrder(order, asc) {
   const col = String(order || 'created_at').trim();
-  if (!col || !COL_RE.test(col)) return '';
+  assertCol(col, 'order col');
   return ` ORDER BY ${col} ${asc === 'false' ? 'DESC' : 'ASC'}`;
 }
 
 export default function dbRoutes({ pool, cfg }) {
   const router = Router();
-  const auth = requireAuth(cfg.jwtSecret);
+  const auth = requireAuth(cfg.jwtSecret, pool);
 
   router.get('/:table', auth, async (req, res) => {
     try {
@@ -77,7 +88,7 @@ export default function dbRoutes({ pool, cfg }) {
 
       res.json({ data: dataRes.rows, totalCount: countRes.rows[0]?.total ?? dataRes.rows.length });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      sendError(res, err);
     }
   });
 
@@ -86,13 +97,13 @@ export default function dbRoutes({ pool, cfg }) {
       const t = req.params.table;
       if (!ALLOWED_TABLES.has(t)) return res.status(400).json({ error: `table ${t} not allowed` });
       const body = req.body || {};
-      const cols = Object.keys(body).filter((c) => COL_RE.test(c));
+      const cols = Object.keys(body).filter((c) => { assertCol(c, 'insert col'); return true; });
       const values = cols.map((c) => body[c]);
       const sql = `INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')}) RETURNING *`;
       const { rows } = await pool.query(sql, values);
       res.json({ data: rows[0] });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      sendError(res, err);
     }
   });
 
@@ -101,7 +112,7 @@ export default function dbRoutes({ pool, cfg }) {
       const t = req.params.table;
       if (!ALLOWED_TABLES.has(t)) return res.status(400).json({ error: `table ${t} not allowed` });
       const body = req.body || {};
-      const cols = Object.keys(body).filter((c) => COL_RE.test(c) && c !== 'id');
+      const cols = Object.keys(body).filter((c) => { assertCol(c, 'update col'); return c !== 'id'; });
       if (!cols.length) return res.status(400).json({ error: 'no updatable columns' });
       const setSql = cols.map((c, i) => `${c} = $${i + 1}`).join(', ');
       const values = cols.map((c) => body[c]);
@@ -112,7 +123,7 @@ export default function dbRoutes({ pool, cfg }) {
       if (!rows[0]) return res.status(404).json({ error: 'row not found' });
       res.json({ data: rows[0] });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      sendError(res, err);
     }
   });
 
@@ -124,7 +135,7 @@ export default function dbRoutes({ pool, cfg }) {
       if (!rowCount) return res.status(404).json({ error: 'row not found' });
       res.json({ data: { deleted: rowCount } });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      sendError(res, err);
     }
   });
 

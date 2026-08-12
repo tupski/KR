@@ -194,7 +194,7 @@ describe('A4 installer routes', () => {
     expect(fin.json.ok).toBe(true);
 
     const files = (await readdir(dir)).sort();
-    expect(files).toEqual(['.env', 'config.json', 'installed.lock']);
+    expect(files).toEqual(['.env', 'config.json', 'install-progress.json', 'installed.lock']);
     const env = await readFile(path.join(dir, '.env'), 'utf8');
     expect(env).toContain('DATABASE_URL=postgres://kr:x%40%2Fy@127.0.0.1:5432/kr');
     expect(env).toContain('JWT_SECRET=');

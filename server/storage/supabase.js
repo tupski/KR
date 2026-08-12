@@ -18,7 +18,7 @@ export function create({ config, env }) {
   return {
     async put({ buffer, fileName, folder }) {
       const key = `${folder}/${fileName}`;
-      const { error } = await client.storage.from(bucket).upload(key, buffer, { upsert: true });
+      const { error } = await client.storage.from(bucket).upload(key, buffer, { upsert: false });
       if (error) throw error;
       const { data } = client.storage.from(bucket).getPublicUrl(key);
       return { key, url: data.publicUrl || proxyUrl(key) };

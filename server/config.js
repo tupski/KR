@@ -25,5 +25,6 @@ export function loadConfig(env = process.env) {
     storageProvider: env.STORAGE_PROVIDER || 'r2',
     distDir: env.DIST_DIR || 'dist',
     bodyLimit: env.BODY_LIMIT || '10mb',
+    corsOrigins: (env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
   };
 }

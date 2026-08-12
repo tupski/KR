@@ -1,8 +1,9 @@
 // Installer routes: multi-step setup before first login. NOT auth-guarded (pre-user).
 // State machine per spec phase_03: DB_FORM → MIGRATE_DONE → ADMIN_CHECK → STORAGE_CHECK → finished.
 // GUARD: any POST 403 once installed.lock exists. Secrets never in response; env-only (K4).
+// M3: progress persisted ke install-progress.json di configDir; M4: /status hanya { installed }.
 import { Router } from 'express';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,17 +21,23 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   const router = Router();
   const dir = configDir || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'config');
   const lockFile = path.join(dir, 'installed.lock');
+  const progressFile = path.join(dir, 'install-progress.json');
   const Pool = dbModule?.Pool || dbModule || pg.Pool;
 
-  // in-memory install state (single process, pre-login)
-  const state = {};
+  const readState = () => {
+    try { return JSON.parse(readFileSync(progressFile, 'utf8')); } catch { return {}; }
+  };
+  const writeState = (state) => {
+    try { writeFileSync(progressFile, JSON.stringify(state, null, 2)); } catch (e) { console.error('progress write failed:', e.message); }
+  };
 
   const isInstalled = () => existsSync(lockFile);
   const rejectIfInstalled = (_req, res, next) =>
     isInstalled() ? res.status(403).json({ error: 'Sudah terpasang' }) : next();
 
+  // M4: tanpa progress leak; cukup { installed }.
   router.get('/status', (_req, res) => {
-    res.json({ installed: isInstalled(), progress: Object.keys(state) });
+    res.json({ installed: isInstalled() });
   });
 
   router.post('/step/db', rejectIfInstalled, async (req, res) => {
@@ -40,7 +47,7 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
       const pool = new Pool(conn);
       const result = await testConnection(pool, 5000);
       if (!result.ok) return res.status(400).json(result);
-      state.db = { conn, ...result };
+      writeState({ db: { conn, ...result } });
       res.json({ ok: true, next: 'migrate', ...result });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });
@@ -48,13 +55,14 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   });
 
   router.post('/step/migrate', rejectIfInstalled, async (req, res) => {
+    const state = readState();
     if (!state.db?.conn) return res.status(400).json({ ok: false, message: 'step db dulu' });
     try {
       const pool = new Pool(state.db.conn);
       const run = migrateFn || (await import('../migrate.js')).migrate;
       const result = await run(pool);
       await pool.end();
-      state.migrated = true;
+      writeState({ ...state, migrated: true });
       res.json({ ok: true, next: 'admin', applied: result.applied });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });
@@ -62,13 +70,14 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   });
 
   router.post('/step/admin', rejectIfInstalled, async (req, res) => {
+    const state = readState();
     if (!state.migrated) return res.status(400).json({ ok: false, message: 'step migrate dulu' });
     try {
       const { email, password, fullName } = req.body || {};
       const pool = new Pool(state.db.conn);
       await createFirstAdmin(pool, { email, password, fullName });
       await pool.end();
-      state.admin = { email, password, fullName, userId: 'created' };
+      writeState({ ...state, admin: { email, password, fullName, userId: 'created' } });
       res.json({ ok: true, next: 'storage' });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });
@@ -76,6 +85,7 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   });
 
   router.post('/step/storage', rejectIfInstalled, async (req, res) => {
+    const state = readState();
     if (!state.admin) return res.status(400).json({ ok: false, message: 'step admin dulu' });
     try {
       const { provider, config = {} } = req.body || {};
@@ -83,7 +93,7 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
       for (const k of NON_SECRET_REQUIRED[provider]) {
         if (!config[k]) throw new Error(`field '${k}' wajib untuk ${provider}`);
       }
-      state.storage = { provider, nonSecret: config };
+      writeState({ ...state, storage: { provider, nonSecret: config } });
       res.json({ ok: true, next: 'finish', provider });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });
@@ -91,6 +101,7 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   });
 
   router.post('/finish', rejectIfInstalled, async (req, res) => {
+    const state = readState();
     if (!state.db?.conn || !state.migrated || !state.admin || !state.storage) {
       return res.status(400).json({ ok: false, message: 'semua step belum selesai' });
     }
@@ -122,12 +133,14 @@ function fromUrl(databaseUrl) {
     throw new Error('databaseUrl tidak valid');
   }
   if (u.protocol !== 'postgres:' && u.protocol !== 'postgresql:') throw new Error('bukan URL postgres');
+  // L3: ?sslmode=require → ssl on; default false untuk kompatibilitas.
+  const ssl = u.searchParams.get('sslmode') === 'require';
   return {
     host: u.hostname,
     port: Number(u.port) || 5432,
     database: decodeURIComponent(u.pathname.replace(/^\//, '')),
     user: decodeURIComponent(u.username),
     password: decodeURIComponent(u.password),
-    ssl: false,
+    ssl: ssl ? { rejectUnauthorized: false } : false,
   };
 }

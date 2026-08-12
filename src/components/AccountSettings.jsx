@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
+import { auth as krAuth } from '@/lib/apiClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { compressImageFile } from '@/lib/compressImage';
@@ -163,8 +164,6 @@ export default function AccountSettings({ open, onOpenChange }) {
   };
 
   const handleChangePassword = async () => {
-    const userEmail = user?.email || '';
-    if (!userEmail) return;
     if (!oldPassword || !newPassword || !confirmPassword) {
       toast({ title: 'Lengkapi semua field password', variant: 'destructive' });
       return;
@@ -179,10 +178,7 @@ export default function AccountSettings({ open, onOpenChange }) {
     }
     setLoading(true);
     try {
-      // re-auth
-      const { error: signErr } = await supabase.auth.signInWithPassword({ email: userEmail, password: oldPassword });
-      if (signErr) throw signErr;
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      const { error } = await krAuth.changePassword({ oldPassword, newPassword });
       if (error) throw error;
       toast({ title: 'Password berhasil diganti' });
       setOldPassword('');

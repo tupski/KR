@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPool = {
   query: vi.fn(),
+  connect: vi.fn(),
 };
 
 vi.mock('./db.js', () => ({
@@ -97,12 +98,86 @@ describe('server: login flow', () => {
 
   it('GET /api/auth/me with valid cookie', async () => {
     const user = { id: 'u1', email: 'a@b.c', password_hash: 'x', full_name: 'A' };
-    mockPool.query.mockResolvedValueOnce({ rows: [user] });
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance check
+      .mockResolvedValueOnce({ rows: [] })                   // blacklist check
+      .mockResolvedValueOnce({ rows: [user] })               // SELECT user
+      .mockResolvedValueOnce({ rows: [{ role: 'admin' }] }); // SELECT role
     const token = signToken({ userId: 'u1', role: 'admin' }, cfg.jwtSecret, '1h');
     const app = createApp({ cfg, pool: mockPool });
     const res = await request(app, 'GET', '/api/auth/me', { cookie: `kr_session=${token}` });
     expect(res.status).toBe(200);
     expect(res.json.user.email).toBe('a@b.c');
+  });
+
+  it('revoked jti → 401 (M1 blacklist)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance check
+      .mockResolvedValueOnce({ rows: [{ jti: 'x' }] });      // blacklist check → revoked
+    const token = signToken({ userId: 'u1', role: 'admin' }, cfg.jwtSecret, '1h');
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'GET', '/api/auth/me', { cookie: `kr_session=${token}` });
+    expect(res.status).toBe(401);
+    expect(res.json.error).toContain('revoked');
+  });
+
+  it('login rate limit: 5 gagal → 429 (T4)', async () => {
+    mockPool.query.mockReset();
+    mockPool.query.mockResolvedValue({ rows: [] }); // user tidak ketemu → 401
+    const app = createApp({ cfg, pool: mockPool });
+    for (let i = 0; i < 5; i++) {
+      const r = await request(app, 'POST', '/api/auth/login', { body: { email: 'a@b.c', password: 'nope' } });
+      expect(r.status).toBe(401);
+    }
+    const r6 = await request(app, 'POST', '/api/auth/login', { body: { email: 'a@b.c', password: 'nope' } });
+    expect(r6.status).toBe(429);
+  });
+
+  it('POST /api/auth/register: karyawan tanpa role → 403 (M2)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance
+      .mockResolvedValueOnce({ rows: [] });                   // blacklist
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/auth/register', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { email: 'a@b.c', password: 'rahasia123' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /api/auth/register: super_admin membuat user (M2)', async () => {
+    const fakeClient = { query: vi.fn(), release: vi.fn() };
+    fakeClient.query
+      .mockResolvedValueOnce({ rows: [] })                 // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 'u2' }] })     // INSERT users
+      .mockResolvedValueOnce({ rows: [] })                 // INSERT user_roles
+      .mockResolvedValueOnce({ rows: [] })                 // INSERT user_profiles
+      .mockResolvedValueOnce({ rows: [] });                // COMMIT
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance
+      .mockResolvedValueOnce({ rows: [] });                   // blacklist
+    mockPool.connect.mockResolvedValue(fakeClient);
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/auth/register', {
+      cookie: `kr_session=${testToken('super_admin')}`,
+      body: { email: 'new@kr.local', password: 'rahasia123', full_name: 'N', role: 'admin' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.json.data.id).toBe('u2');
+    expect(fakeClient.query.mock.calls[1][1][1]).not.toBe('rahasia123');
+  });
+
+  it('POST /api/auth/change-password: old salah → 400 (M2)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance
+      .mockResolvedValueOnce({ rows: [] })                   // blacklist
+      .mockResolvedValueOnce({ rows: [{ password_hash: await hashPassword('benar') }] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/auth/change-password', {
+      cookie: `kr_session=${testToken('super_admin')}`,
+      body: { old_password: 'salah', new_password: 'baru12345' },
+    });
+    expect(res.status).toBe(400);
   });
 
   it('requireRole super_admin rejects karyawan → 403', () => {
@@ -120,6 +195,9 @@ describe('server: dbRoutes whitelist', () => {
   beforeEach(() => mockPool.query.mockReset());
 
   it('disallowed table → 400', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance check
+      .mockResolvedValueOnce({ rows: [] });                   // blacklist check
     const app = createApp({ cfg, pool: mockPool });
     const res = await request(app, 'GET', '/api/db/secret_table', { cookie: `kr_session=${testToken('karyawan')}` });
     expect(res.status).toBe(400);
@@ -128,14 +206,16 @@ describe('server: dbRoutes whitelist', () => {
 
   it('allowed table with range → paginated query + count', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: 1 }] })
-      .mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })   // maintenance check
+      .mockResolvedValueOnce({ rows: [] })                     // blacklist check
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] })            // data
+      .mockResolvedValueOnce({ rows: [{ total: 1 }] });        // count
     const app = createApp({ cfg, pool: mockPool });
     const res = await request(app, 'GET', '/api/db/system_settings?range=0,10', { cookie: `kr_session=${testToken('karyawan')}` });
     expect(res.status).toBe(200);
     expect(res.json.data).toEqual([{ id: 1 }]);
     expect(res.json.totalCount).toBe(1);
-    const sql = mockPool.query.mock.calls[0][0];
+    const sql = mockPool.query.mock.calls[2][0];
     expect(sql).toContain('LIMIT $1 OFFSET $2');
   });
 
