@@ -1,6 +1,7 @@
 // @vitest-environment node
 // A4 installer: full flow via real HTTP + fake pg pool + real fs (temp dir). No real DB.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -106,7 +107,7 @@ describe('A4 installer routes', () => {
     expect(fakeMigrate).toHaveBeenCalledTimes(1);
   });
 
-  it('step/admin create super_admin pertama (bcrypt, users + user_roles)', async () => {
+  it('step/admin validasi saja; password TIDAK ditulis ke install-progress.json', async () => {
     fakePg.query
       .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
       .mockResolvedValueOnce({ rows: [{ has_migrations: null, has_users: null }] });
@@ -114,47 +115,62 @@ describe('A4 installer routes', () => {
     await request(app, 'POST', '/api/install/step/db', { ...goodConn });
     await request(app, 'POST', '/api/install/step/migrate');
 
-    fakePg.pool.connect.mockClear();
     fakePg.query.mockReset();
-    fakePg.query
-      .mockResolvedValueOnce({ rows: [] })                       // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] })           // INSERT users RETURNING id
-      .mockResolvedValueOnce({ rows: [] })                       // INSERT user_roles
-      .mockResolvedValueOnce({ rows: [] });                      // COMMIT
     const res = await request(app, 'POST', '/api/install/step/admin', {
       email: 'admin@kr.local', password: 'rahasia123', fullName: 'Admin KR',
     });
     expect(res.status).toBe(200);
     expect(res.json.next).toBe('storage');
-    const calls = fakePg.query.mock.calls;
-    expect(calls[0][0]).toBe('BEGIN');
-    expect(calls[1][0]).toContain('INSERT INTO users');
-    expect(calls[1][1][0].toLowerCase()).toBe('admin@kr.local');
-    expect(calls[2][0]).toContain('INSERT INTO user_roles');
-    expect(calls[3][0]).toBe('COMMIT');
-    // bcrypt hash tersimpan bukan plain
-    expect(calls[1][1][1]).not.toBe('rahasia123');
+    // Validasi saja: tidak ada query DB sama sekali.
+    expect(fakePg.query).not.toHaveBeenCalled();
+
+    // State hanya referensi: email/fullName tersimpan, password tidak.
+    const state = JSON.parse(await readFile(path.join(dir, 'install-progress.json'), 'utf8'));
+    expect(state.admin.email).toBe('admin@kr.local');
+    expect(state.admin.fullName).toBe('Admin KR');
+    expect(state.admin.password).toBeUndefined();
+    expect(JSON.stringify(state)).not.toContain('rahasia123');
   });
 
-  it('step/admin email duplikat → 400 rapi', async () => {
+  it('step/admin email/password invalid → 400', async () => {
     fakePg.query
       .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
       .mockResolvedValueOnce({ rows: [{ has_migrations: null, has_users: null }] });
     const app = buildApp();
     await request(app, 'POST', '/api/install/step/db', { ...goodConn });
     await request(app, 'POST', '/api/install/step/migrate');
-    fakePg.query.mockReset();
-    const err = new Error('duplicate key value violates unique constraint "users_email_key"');
-    fakePg.pool.connect.mockReset();
-    fakePg.pool.connect.mockRejectedValueOnce(err);
-    const res = await request(app, 'POST', '/api/install/step/admin', {
-      email: 'admin@kr.local', password: 'rahasia123',
-    });
-    expect(res.status).toBe(400);
-    expect(res.json.message).toMatch(/sudah terdaftar|duplicate/i);
+    const bad = await request(app, 'POST', '/api/install/step/admin', { email: 'bukan-email', password: 'rahasia123' });
+    expect(bad.status).toBe(400);
+    const short = await request(app, 'POST', '/api/install/step/admin', { email: 'a@b.c', password: '123' });
+    expect(short.status).toBe(400);
   });
 
-  it('flow lengkap → finish tulis .env + config.json + installed.lock; semua step 403 sesudahnya; status → installed:true', async () => {
+  it('finish: email admin duplikat (createFirstAdmin) → 400; progress tidak dihapus', async () => {
+    fakePg.query
+      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ has_migrations: null, has_users: null }] });
+    const app = buildApp();
+    await request(app, 'POST', '/api/install/step/db', { ...goodConn });
+    await request(app, 'POST', '/api/install/step/migrate');
+    await request(app, 'POST', '/api/install/step/admin', { email: 'admin@kr.local', password: 'rahasia123' });
+    await request(app, 'POST', '/api/install/step/storage', {
+      provider: 'r2', config: { bucket: 'b', endpoint: 'https://r2.example.com' },
+    });
+
+    fakePg.query.mockReset();
+    fakePg.pool.connect.mockReset();
+    const dup = new Error('duplicate key value violates unique constraint "users_email_key"');
+    fakePg.pool.connect.mockRejectedValueOnce(dup);
+    const fin = await request(app, 'POST', '/api/install/finish', {
+      baseUrl: 'https://kr.local', adminPassword: 'rahasia123',
+    });
+    expect(fin.status).toBe(400);
+    expect(fin.json.message).toMatch(/sudah terdaftar|duplicate/i);
+    // Instalasi gagal → progress file tetap ada (bisa diulang), tidak dihapus.
+    expect(existsSync(path.join(dir, 'install-progress.json'))).toBe(true);
+  });
+
+  it('flow lengkap → finish tulis .env + config.json + installed.lock; install-progress.json dihapus; semua step 403 sesudahnya', async () => {
     fakePg.query
       .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
       .mockResolvedValueOnce({ rows: [{ has_migrations: null, has_users: null }] });
@@ -164,13 +180,6 @@ describe('A4 installer routes', () => {
     const migR = await request(app, 'POST', '/api/install/step/migrate');
     expect(migR.status).toBe(200);
 
-    fakePg.query.mockReset();
-    fakePg.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
-    fakePg.pool.connect.mockClear();
     const adminR = await request(app, 'POST', '/api/install/step/admin', {
       email: 'admin@kr.local', password: 'rahasia123',
     });
@@ -181,20 +190,27 @@ describe('A4 installer routes', () => {
     });
     expect(st.status).toBe(200);
 
-    // bootstrap: fake pg pool dijalankan ulang (migrate + createFirstAdmin) — resolusi akhir
+    // bootstrap: fake pg pool dijalankan ulang (migrate + createFirstAdmin) —
+    // admin super_admin dibuat SATU KALI di sini (bukan di step/admin).
     fakePg.pool.connect.mockClear();
     fakePg.query.mockReset();
     fakePg.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
-    const fin = await request(app, 'POST', '/api/install/finish', { baseUrl: 'https://kr.local' });
+      .mockResolvedValueOnce({ rows: [] })                       // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] })           // INSERT users RETURNING id
+      .mockResolvedValueOnce({ rows: [] })                       // INSERT user_roles
+      .mockResolvedValueOnce({ rows: [] });                      // COMMIT
+    const fin = await request(app, 'POST', '/api/install/finish', {
+      baseUrl: 'https://kr.local', adminPassword: 'rahasia123',
+    });
     expect(fin.status).toBe(200);
     expect(fin.json.ok).toBe(true);
+    // bcrypt hash tersimpan, bukan plaintext
+    expect(fakePg.query.mock.calls[1][0]).toContain('INSERT INTO users');
+    expect(fakePg.query.mock.calls[1][1][1]).not.toBe('rahasia123');
 
     const files = (await readdir(dir)).sort();
-    expect(files).toEqual(['.env', 'config.json', 'install-progress.json', 'installed.lock']);
+    expect(files).toEqual(['.env', 'config.json', 'installed.lock']);
+    expect(files).not.toContain('install-progress.json');
     const env = await readFile(path.join(dir, '.env'), 'utf8');
     expect(env).toContain('DATABASE_URL=postgres://kr:x%40%2Fy@127.0.0.1:5432/kr');
     expect(env).toContain('JWT_SECRET=');
@@ -204,6 +220,12 @@ describe('A4 installer routes', () => {
     expect(config.baseUrl).toBe('https://kr.local');
     const lock = JSON.parse(await readFile(path.join(dir, 'installed.lock'), 'utf8'));
     expect(lock.installedAt).toBeTruthy();
+
+    // Password admin plaintext tidak tersisa di file manapun.
+    for (const f of files) {
+      const content = await readFile(path.join(dir, f), 'utf8');
+      expect(content).not.toContain('rahasia123');
+    }
 
     // GUARD: semua POST kini 403, status installed:true
     const blocked = await request(app, 'POST', '/api/install/step/db', { ...goodConn });
@@ -219,13 +241,6 @@ describe('A4 installer routes', () => {
     const app = buildApp();
     await request(app, 'POST', '/api/install/step/db', { ...goodConn });
     await request(app, 'POST', '/api/install/step/migrate');
-    fakePg.query.mockReset();
-    fakePg.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
-    fakePg.pool.connect.mockClear();
     await request(app, 'POST', '/api/install/step/admin', {
       email: 'admin@kr.local', password: 'rahasia123',
     });

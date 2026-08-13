@@ -4,11 +4,12 @@
 // M3: progress persisted ke install-progress.json di configDir; M4: /status hanya { installed }.
 import { Router } from 'express';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { parseDsn, testConnection } from '../installer/validator.js';
-import { bootstrap, createFirstAdmin } from '../installer/bootstrap.js';
+import { bootstrap } from '../installer/bootstrap.js';
 
 const PROVIDERS = ['r2', 'vercel_blob', 'supabase'];
 const NON_SECRET_REQUIRED = {
@@ -16,6 +17,8 @@ const NON_SECRET_REQUIRED = {
   vercel_blob: [],
   supabase: ['bucket'],
 };
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD_LEN = 8;
 
 export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
   const router = Router();
@@ -69,15 +72,18 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
     }
   });
 
+  // Validasi saja (K4): password TIDAK disimpan di install-progress.json.
+  // Admin dibuat sekali di bootstrap (/finish) — hash terjadi di sana.
   router.post('/step/admin', rejectIfInstalled, async (req, res) => {
     const state = readState();
     if (!state.migrated) return res.status(400).json({ ok: false, message: 'step migrate dulu' });
     try {
       const { email, password, fullName } = req.body || {};
-      const pool = new Pool(state.db.conn);
-      await createFirstAdmin(pool, { email, password, fullName });
-      await pool.end();
-      writeState({ ...state, admin: { email, password, fullName, userId: 'created' } });
+      if (!EMAIL_RE.test(String(email || ''))) return res.status(400).json({ ok: false, message: 'email tidak valid' });
+      if (!password || String(password).length < MIN_PASSWORD_LEN) {
+        return res.status(400).json({ ok: false, message: 'password minimal 8 karakter' });
+      }
+      writeState({ ...state, admin: { email: String(email).toLowerCase(), fullName: fullName || null } });
       res.json({ ok: true, next: 'storage' });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });
@@ -107,15 +113,24 @@ export default function installRoutes({ configDir, migrateFn, dbModule } = {}) {
     }
     try {
       const baseUrl = req.body?.baseUrl || '';
+      // Password admin dipegang klien antar step (tidak pernah disimpan di server),
+      // dikirim ulang saat finalisasi untuk pembuatan akun di bootstrap.
+      const adminPassword = req.body?.adminPassword;
+      if (!adminPassword || String(adminPassword).length < MIN_PASSWORD_LEN) {
+        return res.status(400).json({ ok: false, message: 'password admin dibutuhkan untuk finalisasi' });
+      }
       const result = await bootstrap({
         dir,
         conn: state.db.conn,
-        admin: state.admin,
+        admin: { ...state.admin, password: adminPassword },
         storage: state.storage,
         baseUrl,
         migrateFn,
         Pool,
       });
+      // K4/cleanup: buang install-progress.json (berisi DB password + email admin)
+      // setelah instalasi sukses — spec phase_03 step 6.
+      try { await rm(progressFile, { force: true }); } catch { /* non-fatal: lock sudah terkunci */ }
       res.json({ ok: true, redirectUrl: '/', ...result });
     } catch (e) {
       res.status(400).json({ ok: false, message: e.message });

@@ -1,5 +1,6 @@
 import { IS_SELF_HOST, API_BASE } from './config';
 import { upload } from './apiClient';
+import { getAccessToken } from './accessToken';
 
 export const uploadToVercelBlob = async (file, folder = 'uploads') => {
   if (!file) return null;
@@ -18,6 +19,10 @@ export const uploadToVercelBlob = async (file, folder = 'uploads') => {
     'x-file-name': safeName,
     'x-folder': folder,
   };
+
+  // Vercel deployment: upload dilindungi auth → kirim Supabase access token.
+  const accessToken = getAccessToken();
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
   const response = await fetch('/api/upload', {
     method: 'POST',

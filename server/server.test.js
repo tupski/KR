@@ -225,3 +225,167 @@ describe('server: dbRoutes whitelist', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('server: RBAC dbRoutes (VULN-001 fix)', () => {
+  beforeEach(() => mockPool.query.mockReset());
+
+  it('karyawan PATCH user_roles (escalation) → 403, no UPDATE executed', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] }) // maintenance check
+      .mockResolvedValueOnce({ rows: [] });                   // blacklist check
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'PATCH', '/api/db/user_roles/5', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { role: 'super_admin' },
+    });
+    expect(res.status).toBe(403);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('karyawan GET pengeluaran (financial read) → 403', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'GET', '/api/db/pengeluaran?range=0,10', { cookie: `kr_session=${testToken('karyawan')}` });
+    expect(res.status).toBe(403);
+  });
+
+  it('karyawan PATCH transactions (tamper amount) → 403', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'PATCH', '/api/db/transactions/7', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { cash_amount: 999999 },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('karyawan PATCH transactions checkout_at → 200, scoped to own user_id', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] }); // UPDATE result
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'PATCH', '/api/db/transactions/7', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { checkout_at: '2026-01-02T03:00:00Z' },
+    });
+    expect(res.status).toBe(200);
+    const sql = mockPool.query.mock.calls[2][0];
+    const params = mockPool.query.mock.calls[2][1];
+    expect(sql).toContain('checkout_at = $1');
+    expect(sql).toContain('AND user_id = $3');
+    expect(params[2]).toBe('u1');
+  });
+
+  it('karyawan GET user_profiles → scoped WHERE id = own', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'u1' }] }) // data
+      .mockResolvedValueOnce({ rows: [{ total: 1 }] }); // count
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'GET', '/api/db/user_profiles?range=0,10', { cookie: `kr_session=${testToken('karyawan')}` });
+    expect(res.status).toBe(200);
+    const sql = mockPool.query.mock.calls[2][0];
+    expect(sql).toContain('WHERE id = $1');
+    expect(mockPool.query.mock.calls[2][1][0]).toBe('u1');
+  });
+
+  it('karyawan DELETE transactions → 403', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'DELETE', '/api/db/transactions/7', { cookie: `kr_session=${testToken('karyawan')}` });
+    expect(res.status).toBe(403);
+  });
+
+  it('admin PATCH user_roles → 403 (hanya super_admin)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'PATCH', '/api/db/user_roles/5', {
+      cookie: `kr_session=${testToken('admin')}`,
+      body: { role: 'super_admin' },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('server: RBAC rpcBridge (VULN-002 fix)', () => {
+  beforeEach(() => mockPool.query.mockReset());
+
+  it('karyawan admin_update_user → 403', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/rpc/admin_update_user', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { p_user_id: 'u1', p_role: 'super_admin' },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('karyawan pay_tagihan_bulanan → 403', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/rpc/pay_tagihan_bulanan', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { p_tagihan_id: 1 },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('admin pay_tagihan_bulanan → 200', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ ok: true }] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/rpc/pay_tagihan_bulanan', {
+      cookie: `kr_session=${testToken('admin')}`,
+      body: { p_tagihan_id: 1 },
+    });
+    expect(res.status).toBe(200);
+    expect(res.json.data).toEqual([{ ok: true }]);
+  });
+
+  it('log_activity: p_user_id klien ditimpa dari JWT', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/rpc/log_activity', {
+      cookie: `kr_session=${testToken('karyawan')}`,
+      body: { p_action: 'Input Transaksi', p_user_id: 'victim-999' },
+    });
+    expect(res.status).toBe(200);
+    const sql = mockPool.query.mock.calls[2][0];
+    const params = mockPool.query.mock.calls[2][1];
+    expect(sql).toContain('"p_user_id"');
+    expect(params).toContain('u1');
+    expect(params).not.toContain('victim-999');
+  });
+
+  it('super_admin admin_update_user → 200', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ value: 'false' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ ok: true }] });
+    const app = createApp({ cfg, pool: mockPool });
+    const res = await request(app, 'POST', '/api/rpc/admin_update_user', {
+      cookie: `kr_session=${testToken('super_admin')}`,
+      body: { p_user_id: 'u1', p_role: 'admin' },
+    });
+    expect(res.status).toBe(200);
+  });
+});

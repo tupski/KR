@@ -1,4 +1,4 @@
-// RPC bridge: whitelist fungsi, argumen p_user_id dari JWT, tanpa SECURITY DEFINER.
+// RPC bridge: whitelist fungsi, RBAC per fungsi, p_user_id selalu dari JWT, tanpa SECURITY DEFINER.
 import { Router } from 'express';
 import { requireAuth } from '../auth.js';
 import { sendError } from '../errors.js';
@@ -19,6 +19,17 @@ const ARG_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // Fungsi yang memakai auth.uid() di SQL asli → argumen p_user_id disuntik dari JWT.
 const NEEDS_USER_ID = new Set(['log_activity', 'pay_fee_items', 'pay_tagihan_bulanan', 'delete_transaction_cascade']);
 
+// RBAC per fungsi: daftar role yang boleh memanggil. Fungsi tanpa entri → semua role terautentikasi.
+const RPC_ROLES = {
+  get_category_summary: ['admin', 'super_admin'],
+  pay_tagihan_bulanan: ['admin', 'super_admin'],
+  pay_fee_items: ['admin', 'super_admin'],
+  delete_transaction_cascade: ['admin', 'super_admin'],
+  admin_create_user: ['super_admin'],
+  admin_update_user: ['super_admin'],
+  admin_delete_user: ['super_admin'],
+};
+
 export default function rpcBridge({ pool, cfg }) {
   const router = Router();
   const auth = requireAuth(cfg.jwtSecret, pool);
@@ -28,10 +39,15 @@ export default function rpcBridge({ pool, cfg }) {
     if (!ALLOWED_RPC.has(name)) {
       return res.status(400).json({ error: `rpc ${name} not allowed` });
     }
+    const allowed = RPC_ROLES[name];
+    if (allowed && !allowed.includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const args = { ...body };
-      if (NEEDS_USER_ID.has(name) && args.p_user_id === undefined) {
+      // p_user_id SELALU dari JWT — input klien tidak dipercaya (anti spoofing audit log).
+      if (NEEDS_USER_ID.has(name)) {
         args.p_user_id = req.user.sub;
       }
       const keys = Object.keys(args);

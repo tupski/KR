@@ -1,5 +1,8 @@
 /* eslint-env node */
 /* global process, Buffer */
+import { authenticateRequest } from './lib/auth.js';
+import { isSafeInlineContentType } from './lib/files.js';
+
 const ALLOWED_ORIGINS = [
   'https://admin.kakaramaroom.com',
   'https://kr-gamma.vercel.app',
@@ -29,10 +32,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method tidak diizinkan.' });
   }
 
+  // Auth: Bearer header (fetch) atau ?token= (dipakai <img src>).
+  let user;
+  try {
+    user = await authenticateRequest(req, res);
+  } catch (_e) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  if (!user) return; // 401/500 sudah dikirim
+
   try {
     const pathname = String(req.query.pathname || '').replace(/^\/+/, '');
     if (!pathname) {
       return res.status(400).json({ error: 'Parameter pathname wajib diisi.' });
+    }
+    if (pathname.includes('..') || pathname.includes('\\')) {
+      return res.status(400).json({ error: 'pathname tidak valid.' });
     }
 
     const token = process.env.BLOB_READ_WRITE_TOKEN;
@@ -63,8 +78,12 @@ export default async function handler(req, res) {
 
     const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
     const data = Buffer.from(await upstream.arrayBuffer());
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=300');
+    const safe = isSafeInlineContentType(contentType);
+    res.setHeader('Content-Type', safe ? contentType : 'application/octet-stream');
+    res.setHeader('Content-Disposition', safe ? 'inline' : 'attachment');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.status(200).send(data);
   } catch (error) {
     return res.status(500).json({ error: error?.message || 'Terjadi kesalahan saat membaca file Blob.' });

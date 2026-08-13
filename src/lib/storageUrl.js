@@ -1,10 +1,20 @@
 import { IS_SELF_HOST, API_BASE } from './config';
+import { getAccessToken } from './accessToken';
+
+const withToken = (url) => {
+  const token = getAccessToken();
+  if (!token) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+};
 
 export const resolveStorageUrl = (value) => {
   if (!value) return value;
 
-  // Sudah berupa URL proxy internal (Vercel blob legacy atau self-host proxy)
-  if (value.startsWith('/api/blob') || value.startsWith('/api/storage/proxy')) return value;
+  // Self-host proxy → cookie auth, tanpa token.
+  if (value.startsWith('/api/storage/proxy')) return value;
+
+  // Vercel blob legacy proxy → lampirkan token untuk otentikasi.
+  if (value.startsWith('/api/blob')) return withToken(value);
 
   try {
     const parsed = new URL(value);
@@ -12,7 +22,7 @@ export const resolveStorageUrl = (value) => {
     if (!isPrivateBlob) return value;
 
     const pathname = parsed.pathname.replace(/^\/+/, '');
-    return `/api/blob?pathname=${encodeURIComponent(pathname)}`;
+    return withToken(`/api/blob?pathname=${encodeURIComponent(pathname)}`);
   } catch (_error) {
     return value;
   }

@@ -105,7 +105,8 @@ export default function InstallerPage({ onDone }) {
   const handleFinish = async () => {
     setBusy(true);
     try {
-      await post('/api/install/finish', { baseUrl });
+      // Password admin dikirim ulang saat finalisasi (tidak disimpan server antar step).
+      await post('/api/install/finish', { baseUrl, adminPassword: admin.password });
       toast({ title: 'Instalasi selesai!', description: 'Mengarahkan ke halaman login...' });
       setTimeout(() => { onDone?.(); window.location.href = '/'; }, 800);
     } catch (err) {
