@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/customSupabaseClient';
-import { 
-  Users, UserPlus, Search, Edit2, Trash2, Shield, User, 
+import {
+  Users, UserPlus, Search, Edit2, Trash2, Shield, User,
   Phone, Mail, Check, X, MoreVertical, ChevronDown, Filter,
-  MapPin, CheckSquare, Square
+  MapPin, CheckSquare, Square, LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -43,6 +43,7 @@ const UserManagementModern = () => {
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isAssignmentOpen, setIsAssignmentOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -186,6 +187,29 @@ const UserManagementModern = () => {
     setIsAssignmentOpen(true);
   };
 
+  const handleOpenSignOut = (user) => {
+    setSelectedUser(user);
+    setIsSigningOut(true);
+  };
+
+  const handleSignOutUser = async () => {
+    if (!selectedUser) return;
+    try {
+      setIsSubmitting(true);
+      const { error } = await supabase.rpc('admin_sign_out_user', {
+        p_target_user_id: selectedUser.id
+      });
+      if (error) throw error;
+      toast({ title: `Semua perangkat ${selectedUser.full_name} berhasil logout` });
+      setIsSigningOut(false);
+      setSelectedUser(null);
+    } catch (error) {
+      toast({ title: "Gagal logout perangkat", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const refreshAllAssignments = async () => {
     const { data, error } = await supabase.from('user_location_assignments').select('*').order('id', { ascending: true });
     if (error) throw error;
@@ -310,6 +334,9 @@ const UserManagementModern = () => {
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => handleOpenEdit(user)} className="h-8 w-8 text-slate-400 hover:text-blue-600">
                     <Edit2 className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={() => handleOpenSignOut(user)} title="Logout Semua Device" className="h-8 w-8 text-slate-400 hover:text-amber-600">
+                    <LogOut className="h-4 w-4" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => { setSelectedUser(user); setIsDeleting(true); }} className="h-8 w-8 text-slate-400 hover:text-red-600">
                     <Trash2 className="h-4 w-4" />
@@ -440,6 +467,24 @@ const UserManagementModern = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Logout All Devices Confirmation */}
+      <AlertDialog open={isSigningOut} onOpenChange={setIsSigningOut}>
+        <AlertDialogContent className="bg-white rounded-3xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Logout Semua Device?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Logout semua perangkat <strong>{selectedUser?.full_name}</strong>? Semua sesi aktif akan ditutup.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSubmitting}>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSignOutUser} disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white">
+              {isSubmitting ? 'Logging out...' : 'Ya, Logout'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation */}
       <AlertDialog open={isDeleting} onOpenChange={setIsDeleting}>

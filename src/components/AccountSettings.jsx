@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, KeyRound, Phone, Save, User2 } from 'lucide-react';
+import { Camera, KeyRound, LogOut, Phone, Save, User2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
@@ -27,6 +37,9 @@ export default function AccountSettings({ open, onOpenChange }) {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  const [signOutDialogOpen, setSignOutDialogOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const displayAvatar = avatarUrl || user?.user_metadata?.avatar_url || DEFAULT_AVATAR;
   const roleLabel = userRole === 'super_admin' ? 'Super Admin' : userRole === 'admin' ? 'Admin' : 'Karyawan';
@@ -192,6 +205,20 @@ export default function AccountSettings({ open, onOpenChange }) {
       toast({ title: 'Gagal ganti password', description: e?.message || 'Coba lagi.', variant: 'destructive' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSignOutAllDevices = async () => {
+    setSigningOut(true);
+    try {
+      const { error } = await supabase.rpc('sign_out_own_devices');
+      if (error) throw error;
+      toast({ title: 'Semua perangkat telah logout' });
+      setSignOutDialogOpen(false);
+    } catch (e) {
+      toast({ title: 'Gagal logout perangkat', description: e?.message || 'Coba lagi.', variant: 'destructive' });
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -362,6 +389,25 @@ export default function AccountSettings({ open, onOpenChange }) {
         </section>
 
         <section className="rounded-xl border bg-white p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <LogOut className="h-4 w-4" /> Keamanan
+          </h3>
+          <p className="text-xs text-slate-600">
+            Logout dari semua perangkat. Semua sesi aktif akan ditutup, termasuk perangkat ini. Anda harus login ulang.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            onClick={() => setSignOutDialogOpen(true)}
+            disabled={signingOut}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            {signingOut ? 'Logging out...' : 'Logout Semua Perangkat'}
+          </Button>
+        </section>
+
+        <section className="rounded-xl border bg-white p-4">
           <h3 className="mb-2 text-sm font-semibold text-slate-900">Notifikasi</h3>
           <p className="text-xs text-slate-600">Aktifkan push notification agar Anda menerima pemberitahuan penting.</p>
           <Button type="button" className="mt-3 w-full bg-blue-700 hover:bg-blue-800" onClick={handleEnablePush}>
@@ -378,6 +424,23 @@ export default function AccountSettings({ open, onOpenChange }) {
           © {new Date().getFullYear()} - Kakarama Room. All rights reserved.
         </p>
       </DialogContent>
+
+      <AlertDialog open={signOutDialogOpen} onOpenChange={setSignOutDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Logout Semua Perangkat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Keluar dari semua perangkat? Semua sesi aktif Anda akan ditutup, termasuk perangkat ini. Anda harus login ulang.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={signingOut}>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSignOutAllDevices} disabled={signingOut} className="bg-red-600 hover:bg-red-700 text-white">
+              {signingOut ? 'Logging out...' : 'Ya, Logout'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
