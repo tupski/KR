@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, CheckCheck, Filter, Trash2, CheckSquare, Square, Settings2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -152,14 +152,20 @@ export default function AllNotifications({ open, onOpenChange }) {
     }
   }, [open]);
 
+  const allNotifDebounceRef = useRef(null);
+  const debouncedLoad = useCallback(() => {
+    if (allNotifDebounceRef.current) clearTimeout(allNotifDebounceRef.current);
+    allNotifDebounceRef.current = setTimeout(() => load(), 1500);
+  }, [load]);
+
   useEffect(() => {
     if (!open) return;
     load();
     const channel = supabase
       .channel(`all_notif_${userId || 'anon'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, debouncedLoad)
       .subscribe();
     return () => supabase.removeChannel(channel);
     // eslint-disable-next-line react-hooks/exhaustive-deps

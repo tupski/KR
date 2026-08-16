@@ -85,17 +85,23 @@ const HalamanTagihan = () => {
     calculateSummary();
   }
 
+  const financeDebounceRef = useRef(null);
+  const debouncedCalculateSummary = useCallback(() => {
+    if (financeDebounceRef.current) clearTimeout(financeDebounceRef.current);
+    financeDebounceRef.current = setTimeout(() => calculateSummary(), 1500);
+  }, [calculateSummary]);
+
   useEffect(() => {
     calculateSummary();
     const realtimeChannel = supabase.channel('public:finance_updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, calculateSummary)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengeluaran' }, calculateSummary)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_bulanan' }, calculateSummary)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas' }, calculateSummary)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedCalculateSummary)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengeluaran' }, debouncedCalculateSummary)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_bulanan' }, debouncedCalculateSummary)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas' }, debouncedCalculateSummary)
       .subscribe();
 
     return () => { supabase.removeChannel(realtimeChannel); };
-  }, [calculateSummary]);
+  }, [debouncedCalculateSummary]);
 
   return (
     <div className="min-h-screen p-4 pt-6 pb-28">
@@ -846,8 +852,11 @@ const TagihanFee = ({ onDataUpdate }) => {
     const startTime = startOfDay(new Date(feeDateFrom));
     const endTimeExclusive = addDays(startOfDay(new Date(feeDateTo)), 1);
 
-    const { data: transactions, error: transError } = await supabase.from('transactions').select('*')
-      .gte('checkin_at', startTime.toISOString()).lt('checkin_at', endTimeExclusive.toISOString());
+    const { data: transactions, error: transError } = await supabase
+      .from('transactions')
+      .select('id, marketing_name, marketing_fee, customer_name, apartment_location, checkin_at')
+      .gte('checkin_at', startTime.toISOString())
+      .lt('checkin_at', endTimeExclusive.toISOString());
     if (transError) console.error(transError);
 
     const txIds = (transactions || []).map((t) => t.id).filter((id) => id != null);
@@ -890,15 +899,21 @@ const TagihanFee = ({ onDataUpdate }) => {
     setUnpaidFees(unpaidFeeArray);
   }, [feeDateFrom, feeDateTo]);
 
+  const tagihanRealtimeDebounceRef = useRef(null);
+  const debouncedLoadData = useCallback(() => {
+    if (tagihanRealtimeDebounceRef.current) clearTimeout(tagihanRealtimeDebounceRef.current);
+    tagihanRealtimeDebounceRef.current = setTimeout(() => loadData(), 1500);
+  }, [loadData]);
+
   useEffect(() => {
     loadData();
     const channel = supabase.channel('public:tagihan_fee')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas' }, () => { loadData(); refreshPaidFees(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas_items' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedLoadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas' }, () => { debouncedLoadData(); refreshPaidFees(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_fee_lunas_items' }, debouncedLoadData)
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [loadData, refreshPaidFees]);
+  }, [debouncedLoadData, refreshPaidFees]);
 
   const openPayModal = (fee) => {
     setModalMarketing(fee);

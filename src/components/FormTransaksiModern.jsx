@@ -192,7 +192,16 @@ const FormTransaksiModern = ({
           supabase.from('nomor_kamar').select('name, lokasi').order('name'),
           supabase.from('marketing_list').select('name').order('name'),
           supabase.from('karyawan_list').select('name').order('name'),
-          supabase.from('transactions').select('apartment_location, room_number, created_at, checkin_at, rental_duration, checkout_at').order('created_at', { ascending: false }),
+          (() => {
+            const since = new Date();
+            since.setDate(since.getDate() - 90);
+            return supabase
+              .from('transactions')
+              .select('apartment_location, room_number, checkin_at, rental_duration, checkout_at')
+              .gte('checkin_at', since.toISOString())
+              .order('checkin_at', { ascending: false })
+              .limit(500);
+          })(),
           supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id)
         ]);
 

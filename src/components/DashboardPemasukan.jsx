@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, Calendar, Share2, Edit, Trash2, UserCheck, Image as ImageIcon, Download, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from '@/components/ui/use-toast';
@@ -122,7 +122,7 @@ const DashboardPemasukan = () => {
       const toIso = toDate.toISOString();
       let query = supabase
         .from('transactions')
-        .select('*')
+        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, total_amount, payment_method, category, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, receipt_url')
         .or(`and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`);
 
       if (lokasi !== 'semua') query = query.eq('apartment_location', lokasi);
@@ -184,11 +184,17 @@ const DashboardPemasukan = () => {
     loadInitialData();
   }, [loadInitialData]);
 
+  const realtimeDebounceRef = useRef(null);
+  const debouncedRefreshDashboard = useCallback(() => {
+    if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+    realtimeDebounceRef.current = setTimeout(() => refreshDashboardData(), 1500);
+  }, [refreshDashboardData]);
+
   useEffect(() => {
     refreshDashboardData();
     const channel = supabase
       .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, refreshDashboardData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedRefreshDashboard)
       .subscribe();
 
     // Fallback mobile: beberapa browser mobile/PWA kadang suspend websocket realtime.

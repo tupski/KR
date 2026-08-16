@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CheckCheck, Bell, Filter, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -158,12 +158,18 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
     if (open) { setPage(1); setOnlyUnread(false); }
   }, [open]);
 
+  const inboxDebounceRef = useRef(null);
+  const debouncedLoad = useCallback(() => {
+    if (inboxDebounceRef.current) clearTimeout(inboxDebounceRef.current);
+    inboxDebounceRef.current = setTimeout(() => load(), 1500);
+  }, [load]);
+
   useEffect(() => {
     if (!open) return;
     load();
     const channel = supabase.channel(`notif_inbox_${userId || 'anon'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, debouncedLoad)
       .subscribe();
     return () => supabase.removeChannel(channel);
     // eslint-disable-next-line react-hooks/exhaustive-deps

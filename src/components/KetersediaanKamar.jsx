@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlertTriangle,
@@ -322,15 +322,21 @@ const KetersediaanKamar = () => {
     setLoading(false);
   }, []);
 
+  const kamarRealtimeDebounceRef = useRef(null);
+  const debouncedFetchRoomStatus = useCallback(() => {
+    if (kamarRealtimeDebounceRef.current) clearTimeout(kamarRealtimeDebounceRef.current);
+    kamarRealtimeDebounceRef.current = setTimeout(() => fetchRoomStatus(), 1500);
+  }, [fetchRoomStatus]);
+
   useEffect(() => {
     fetchRoomStatus();
     const channel = supabase
       .channel('realtime-kamar-v2')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, fetchRoomStatus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'nomor_kamar' }, fetchRoomStatus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedFetchRoomStatus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'nomor_kamar' }, debouncedFetchRoomStatus)
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [fetchRoomStatus]);
+  }, [debouncedFetchRoomStatus]);
 
   const loadRoomReport = useCallback(async () => {
     setReportLoading(true);

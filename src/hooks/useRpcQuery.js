@@ -12,8 +12,8 @@ import { supabase } from '@/lib/customSupabaseClient';
 // (revalidate) bila usia > staleTimeMs (default 30_000 ms).
 //
 const _cache = new Map();
-const DEFAULT_STALE_MS = 30_000;
-const DEFAULT_TTL_MS = 5 * 60_000;
+const DEFAULT_STALE_MS = 5 * 60_000;   // 5 menit (revalidate latar)
+const DEFAULT_TTL_MS = 15 * 60_000;    // 15 menit (cache valid)
 
 function makeCacheKey(rpcName, rpcParams) {
   return `${rpcName}::${JSON.stringify(rpcParams)}`;

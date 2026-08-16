@@ -343,7 +343,6 @@ function App() {
     { id: 'finance', label: 'Keuangan', icon: FileText },
     { id: 'ranking', label: 'Ranking', icon: Trophy },
     { id: 'chart', label: 'Grafik', icon: PieChart },
-    { id: 'analytics', label: 'Analitik', icon: BarChart2 },
     { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
   ];
 
@@ -433,10 +432,6 @@ function App() {
         return <RankingMarketing key={activeTab} />;
       case 'chart':
         return <OmsetChart key={activeTab} />;
-      case 'analytics':
-        return (userRole === 'admin' || userRole === 'super_admin')
-          ? <AnalyticsDashboard key={activeTab} />
-          : null;
       case 'pengaturan':
         return isSuperAdmin ? <SuperAdminDashboard key={activeTab} /> : <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
       default:
