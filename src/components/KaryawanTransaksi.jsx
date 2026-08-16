@@ -4,7 +4,7 @@ import { AlertTriangle, Image as ImageIcon, MessageCircle, X, ChevronDown, Chevr
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import { resolveFileUrl } from '@/api/storage.api';
 import { formatPaymentLines, formatRupiahNumber } from '@/lib/formatPaymentText';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -172,8 +172,8 @@ const KaryawanTransaksi = ({ onRequestNavigate }) => {
   const previewViewerItems = useMemo(() => {
     if (!previewTransaksi) return [];
     const list = [];
-    if (previewTransaksi.ktp_image_url) list.push({ src: resolveStorageUrl(previewTransaksi.ktp_image_url), title: 'KTP', downloadName: `ktp-${previewTransaksi.id}.jpg` });
-    if (previewTransaksi.transfer_proof_url) list.push({ src: resolveStorageUrl(previewTransaksi.transfer_proof_url), title: 'Bukti transfer', downloadName: `bukti-${previewTransaksi.id}.jpg` });
+    if (previewTransaksi.ktp_image_url) list.push({ src: resolveFileUrl(previewTransaksi.ktp_image_url), title: 'KTP', downloadName: `ktp-${previewTransaksi.id}.jpg` });
+    if (previewTransaksi.transfer_proof_url) list.push({ src: resolveFileUrl(previewTransaksi.transfer_proof_url), title: 'Bukti transfer', downloadName: `bukti-${previewTransaksi.id}.jpg` });
     return list;
   }, [previewTransaksi]);
 

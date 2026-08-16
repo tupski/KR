@@ -8,8 +8,7 @@ import { financeApi } from '@/api/finance.api';
 import { pengeluaranApi } from '@/api/pengeluaran.api';
 import { locationsApi } from '@/api/locations.api';
 import { transactionsApi } from '@/api/transactions.api';
-import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import * as storageApi from '@/api/storage.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { addDays, addMonths, format, endOfMonth, startOfDay, startOfMonth, subDays, subMonths } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
@@ -381,7 +380,7 @@ const TagihanBulanan = ({ onDataUpdate }) => {
     let proof_url = null;
     if (buktiBayarFile) {
       try {
-        proof_url = await uploadToVercelBlob(buktiBayarFile, 'tagihan-proofs');
+        proof_url = await storageApi.uploadFile(buktiBayarFile, 'tagihan-proofs');
       } catch (uploadError) {
         toast({ title: "Gagal upload bukti", description: uploadError.message, variant: "destructive" });
         setIsSubmitting(false);
@@ -678,7 +677,7 @@ const TagihanBulanan = ({ onDataUpdate }) => {
               <p className="text-blue-700 font-semibold">{formatRupiah(item.amount)}</p>
               <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
               <div className="flex justify-between items-center mt-2">
-                {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" /> Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran tagihan bulanan.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt="Bukti bayar" className="rounded-lg" /></DialogContent></Dialog>)}
+                {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" /> Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran tagihan bulanan.</DialogDescription></DialogHeader><img src={storageApi.resolveFileUrl(item.proof_url)} alt="Bukti bayar" className="rounded-lg" /></DialogContent></Dialog>)}
               </div>
             </motion.div>
           ))}
@@ -941,7 +940,7 @@ const TagihanFee = ({ onDataUpdate }) => {
       let proof_url = null;
       if (uploadFile) {
         try {
-          proof_url = await uploadToVercelBlob(uploadFile, 'fee-proofs');
+          proof_url = await storageApi.uploadFile(uploadFile, 'fee-proofs');
         } catch (uploadError) {
           toast({ title: "Gagal upload bukti", description: uploadError.message, variant: "destructive" });
           setIsSubmitting(false);
@@ -1317,7 +1316,7 @@ const TagihanFee = ({ onDataUpdate }) => {
                   <p className="text-blue-700 font-semibold">{formatRupiah(item.total_fee)} ({item.customer_count} CS)</p>
                   <p className="text-xs text-gray-500">Lunas: {formatLunasDateTimeWib(item.paid_at)}</p>
                   <div className="flex gap-2 items-center mt-2">
-                    {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" />Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran Fee</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran fee marketing.</DialogDescription></DialogHeader><img src={resolveStorageUrl(item.proof_url)} alt={`Bukti bayar ${item.marketing_name}`} className="rounded-lg w-full" /></DialogContent></Dialog>)}
+                    {item.proof_url && (<Dialog><DialogTrigger asChild><Button variant="link" className="text-blue-600 p-0 h-auto"><Eye className="w-4 h-4 mr-1" />Lihat Bukti</Button></DialogTrigger><DialogContent className="bg-black/80"><DialogHeader><DialogTitle className="text-white">Bukti Pembayaran Fee</DialogTitle><DialogDescription className="text-gray-300">Pratinjau bukti pembayaran fee marketing.</DialogDescription></DialogHeader><img src={storageApi.resolveFileUrl(item.proof_url)} alt={`Bukti bayar ${item.marketing_name}`} className="rounded-lg w-full" /></DialogContent></Dialog>)}
                     <Button size="icon" onClick={() => handleShare(item)} className="h-7 w-7 bg-green-500"><Share2 className="w-4 h-4" /></Button>
                   </div>
                 </motion.div>

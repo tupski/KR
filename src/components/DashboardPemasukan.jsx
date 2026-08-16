@@ -12,7 +12,7 @@ import ManajemenDeposit from '@/components/ManajemenDeposit';
 import { addDays, addMonths, format, startOfDay, startOfMonth } from 'date-fns';
 import * as XLSX from 'xlsx';
 import PinInput from '@/components/PinInput';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import { resolveFileUrl } from '@/api/storage.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { formatPaymentLines, formatRupiahNumber } from '@/lib/formatPaymentText';
 
@@ -564,7 +564,7 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
                                   <DialogTitle className="text-white">Bukti Transfer</DialogTitle>
                                   <DialogDescription className="text-gray-300">Pratinjau gambar bukti transfer transaksi.</DialogDescription>
                                 </DialogHeader>
-                                <img src={resolveStorageUrl(transaksi.transfer_proof_url)} alt="Bukti Transfer" className="w-full rounded-lg" />
+                                <img src={resolveFileUrl(transaksi.transfer_proof_url)} alt="Bukti Transfer" className="w-full rounded-lg" />
                               </DialogContent>
                             </Dialog>
                           )}

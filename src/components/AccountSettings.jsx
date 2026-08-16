@@ -16,7 +16,7 @@ import { toast } from '@/components/ui/use-toast';
 import { usersApi } from '@/api/users.api';
 import { authApi } from '@/api/auth.api';
 import { useAuth } from '@/contexts/AuthContext';
-import { uploadToStorage } from '@/api/storage.api';
+import { uploadFile } from '@/api/storage.api';
 import { compressImageFile } from '@/lib/compressImage';
 import { isPushSupported, registerPushSubscription, saveSubscriptionToSupabase } from '@/lib/pushClient';
 
@@ -83,7 +83,7 @@ export default function AccountSettings({ open, onOpenChange }) {
     setLoading(true);
     try {
       const compressed = await compressImageFile(file, { maxWidth: 1024, maxHeight: 1024, quality: 0.85 });
-      const url = await uploadToVercelBlob(compressed, 'avatars');
+      const url = await uploadFile(compressed, 'avatars');
       setAvatarUrl(url);
       // Simpan ke user_profiles via REST API
       await usersApi.updateMyProfile({ avatar_url: url });
