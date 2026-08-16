@@ -122,7 +122,7 @@ const DashboardPemasukan = () => {
       const toIso = toDate.toISOString();
       let query = supabase
         .from('transactions')
-        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, total_amount, payment_method, category, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, receipt_url')
+        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, payment_method, category, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, receipt_url')
         .or(`and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`);
 
       if (lokasi !== 'semua') query = query.eq('apartment_location', lokasi);
