@@ -1,28 +1,34 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
+import { api } from '@/api/client';
 
 /**
- * Custom hook for server-side pagination using Supabase .range() queries.
+ * Custom hook for server-side pagination using the REST API.
  *
  * @param {object} options
- * @param {string} options.table - Supabase table name
- * @param {string} [options.select='*'] - Select clause
- * @param {number} [options.pageSize=10] - Items per page
- * @param {string} options.orderBy - Column to order by
- * @param {boolean} [options.ascending=false] - Sort direction
- * @param {Record<string, { op: 'eq'|'gte'|'lte'|'is', value: any, column?: string }>} [options.filters] - Filter conditions (key is used as column name unless explicit `column` property is provided)
- * @param {boolean} [options.enabled=true] - Whether to fetch data
+ * @param {string} options.table      - REST endpoint path (e.g. '/api/transactions').
+ *                                      Also accepted as `endpoint` (alias).
+ * @param {string} [options.endpoint] - Alias for `table` — preferred name for new callers.
+ * @param {string} [options.select]   - Ignored (kept for backward-compat with old Supabase callers).
+ * @param {number} [options.pageSize=10]
+ * @param {string} options.orderBy
+ * @param {boolean} [options.ascending=false]
+ * @param {Record<string, { op: 'eq'|'gte'|'lte'|'is'|'not_is_null', value: any, column?: string }>} [options.filters]
+ * @param {boolean} [options.enabled=true]
  * @returns {object} Paginated query result
  */
 export function usePaginatedQuery({
   table,
-  select = '*',
+  endpoint,
+  select,            // kept for compat — not sent to REST API
   pageSize: initialPageSize = 10,
   orderBy,
   ascending = false,
   filters: externalFilters,
   enabled = true,
 }) {
+  // `endpoint` takes precedence; fall back to `table` for backward compat
+  const resolvedEndpoint = endpoint || table;
+
   const [data, setData] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -33,16 +39,13 @@ export function usePaginatedQuery({
 
   const isMountedRef = useRef(true);
 
-  // Use external filters when provided, sync to internal state
+  // Use external filters when provided; fall back to internal
   const activeFilters = externalFilters !== undefined ? externalFilters : internalFilters;
 
-  // Stable JSON representation of filters — used as fetchPage dependency
-  // so that object identity changes (new literal each render) don't cause
-  // infinite re-fetch loops.
+  // Stable JSON string to avoid infinite re-fetch on object identity changes
   const activeFiltersJson = JSON.stringify(activeFilters || {});
   const activeFiltersJsonRef = useRef(activeFiltersJson);
 
-  // Calculate derived values
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
   // Reset to page 1 when filter content changes
@@ -53,84 +56,89 @@ export function usePaginatedQuery({
     }
   }, [activeFiltersJson]);
 
-  // Fetch data — depends on serialized filters string, not object reference
+  /**
+   * Convert the filters object into flat query params understood by the REST API.
+   * e.g. { status: { op: 'eq', value: 'active' } } → { status: 'active' }
+   * Operators gte/lte map to status_gte / status_lte conventions.
+   */
+  function filtersToParams(filtersSnapshot) {
+    const params = {};
+    if (!filtersSnapshot || typeof filtersSnapshot !== 'object') return params;
+
+    Object.entries(filtersSnapshot).forEach(([key, condition]) => {
+      if (!condition || typeof condition !== 'object' || !('op' in condition)) return;
+      const { op, value, column: col } = condition;
+      const column = col || key;
+
+      if (value === undefined) return;
+      if (value === null && op !== 'is' && op !== 'not_is_null') return;
+
+      switch (op) {
+        case 'eq':
+          params[column] = value;
+          break;
+        case 'gte':
+          params[`${column}_gte`] = value;
+          break;
+        case 'lte':
+          params[`${column}_lte`] = value;
+          break;
+        case 'is':
+          params[column] = value === null ? 'null' : value;
+          break;
+        case 'not_is_null':
+          params[`${column}_not_null`] = 'true';
+          break;
+        default:
+          break;
+      }
+    });
+
+    return params;
+  }
+
   const fetchPage = useCallback(async () => {
-    if (!enabled || !table || !orderBy) return;
+    if (!enabled || !resolvedEndpoint || !orderBy) return;
 
     setIsLoading(true);
     setError(null);
 
-    const offset = (currentPage - 1) * pageSize;
-    // Parse filters from stable JSON string to avoid stale closure issues
     const filtersSnapshot = JSON.parse(activeFiltersJsonRef.current || '{}');
 
     try {
-      let query = supabase
-        .from(table)
-        .select(select, { count: 'exact' })
-        .order(orderBy, { ascending });
+      const params = {
+        page: currentPage,
+        limit: pageSize,
+        orderBy,
+        ascending,
+        ...filtersToParams(filtersSnapshot),
+      };
 
-      // Apply filters
-      if (filtersSnapshot && typeof filtersSnapshot === 'object') {
-        Object.entries(filtersSnapshot).forEach(([key, condition]) => {
-          if (condition && typeof condition === 'object' && 'op' in condition) {
-            const { op, value, column: col } = condition;
-            const column = col || key;
-            if (value === undefined || (value === null && op !== 'is' && op !== 'not_is_null')) return;
-
-            switch (op) {
-              case 'eq':
-                query = query.eq(column, value);
-                break;
-              case 'gte':
-                query = query.gte(column, value);
-                break;
-              case 'lte':
-                query = query.lte(column, value);
-                break;
-              case 'is':
-                query = query.is(column, value);
-                break;
-              case 'not_is_null':
-                query = query.not(column, 'is', null);
-                break;
-              default:
-                break;
-            }
-          }
-        });
-      }
-
-      // Apply range for pagination
-      query = query.range(offset, offset + pageSize - 1);
-
-      const { data: fetchedData, count, error: queryError } = await query;
+      const result = await api.get(resolvedEndpoint, params);
 
       if (!isMountedRef.current) return;
 
-      if (queryError) {
-        setError('Gagal memuat data. Silakan coba lagi.');
-      } else {
-        setData(fetchedData || []);
-        setTotalItems(count || 0);
+      // Server must return { data: [...], total: number }
+      const fetchedData = result?.data ?? result ?? [];
+      const total = result?.total ?? result?.count ?? fetchedData.length;
 
-        // Empty page fallback: if current page is empty and not page 1, go to previous page
-        if (fetchedData?.length === 0 && currentPage > 1) {
-          setCurrentPage((prev) => prev - 1);
-        }
+      setData(fetchedData);
+      setTotalItems(total);
+
+      // Empty page fallback
+      if (fetchedData.length === 0 && currentPage > 1) {
+        setCurrentPage((prev) => prev - 1);
       }
     } catch (err) {
       if (!isMountedRef.current) return;
       setError('Gagal memuat data. Silakan coba lagi.');
     } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false);
-      }
+      if (isMountedRef.current) setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, select, pageSize, orderBy, ascending, activeFiltersJson, currentPage, enabled]);
+  }, [resolvedEndpoint, pageSize, orderBy, ascending, activeFiltersJson, currentPage, enabled]);
 
-  // Fetch when dependencies change
+  // Trigger fetch on dependency changes
   useEffect(() => {
     fetchPage();
   }, [fetchPage]);
@@ -138,18 +146,14 @@ export function usePaginatedQuery({
   // Cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
-  // Public API: change page size and reset to page 1
   const setPageSize = useCallback((size) => {
     setPageSizeState(size);
     setCurrentPage(1);
   }, []);
 
-  // Public API: set page with clamping
   const setPage = useCallback(
     (page) => {
       const clamped = Math.max(1, Math.min(page, totalPages));
@@ -158,12 +162,10 @@ export function usePaginatedQuery({
     [totalPages]
   );
 
-  // Public API: refresh current page (re-fetch)
   const refresh = useCallback(() => {
     fetchPage();
   }, [fetchPage]);
 
-  // Public API: update filters programmatically (triggers page reset via useEffect)
   const setFilters = useCallback((newFilters) => {
     setInternalFilters(newFilters || {});
   }, []);

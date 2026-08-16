@@ -1,17 +1,26 @@
-export const resolveStorageUrl = (value) => {
-  if (!value) return value;
+/**
+ * @file storageUrl.js
+ * @description Resolve stored file values to fully-qualified URLs.
+ * Supports legacy Vercel Blob proxy, new backend storage proxy, and external URLs.
+ */
 
-  // Sudah berupa URL proxy internal
-  if (value.startsWith('/api/blob')) return value;
+import { resolveFileUrl } from '@/api/storage.api';
 
-  try {
-    const parsed = new URL(value);
-    const isPrivateBlob = parsed.hostname.endsWith('.private.blob.vercel-storage.com');
-    if (!isPrivateBlob) return value;
+/**
+ * Resolve a stored file value to a fully-qualified URL.
+ * Delegates to src/api/storage.api.js for the actual logic.
+ *
+ * Rules:
+ *  - null/undefined                → return as-is
+ *  - /api/blob?pathname=...        → convert legacy proxy to new storage URL
+ *  - .../api/storage/file/...      → already resolved, return as-is
+ *  - private Vercel Blob hostname  → proxy via backend /api/storage/file/
+ *  - any other full URL            → return as-is (public CDN, etc.)
+ *  - bare relative path            → treat as storage pathname
+ *
+ * @param {string|null|undefined} value
+ * @returns {string|null|undefined}
+ */
+export const resolveStorageUrl = resolveFileUrl;
 
-    const pathname = parsed.pathname.replace(/^\/+/, '');
-    return `/api/blob?pathname=${encodeURIComponent(pathname)}`;
-  } catch (_error) {
-    return value;
-  }
-};
+export default resolveStorageUrl;

@@ -4,7 +4,7 @@ import App from '@/App';
 import '@/index.css';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from '@/components/ui/toaster';
-import { AuthProvider } from '@/contexts/SupabaseAuthContext';
+import { AuthProvider } from '@/contexts/AuthContext';
 import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { checkAppUpdate } from '@/utils/checkAppUpdate';

@@ -1,28 +1,78 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
+import { api } from '@/api/client';
 
 // ---------------------------------------------------------------------------
-// In-memory cache (stale-while-revalidate semantics)
+// RPC name → REST analytics endpoint mapping
 // ---------------------------------------------------------------------------
-//
-// Key: deterministic JSON dari (rpcName, params, currentPage, pageSize, paginated)
-// Value: { data, totalCount, fetchedAt (ms) }
-//
-// Default TTL: 60_000 ms. Cache hit: tampilkan instan, lalu refetch latar
-// (revalidate) bila usia > staleTimeMs (default 30_000 ms).
-//
+const RPC_TO_ENDPOINT = {
+  get_dashboard_kpis:          '/api/analytics/kpis',
+  get_occupancy_per_unit:      '/api/analytics/occupancy',
+  get_location_fullness:       '/api/analytics/location-fullness',
+  get_stay_duration:           '/api/analytics/stay-duration',
+  get_marketing_performance:   '/api/analytics/marketing',
+  get_payment_methods:         '/api/analytics/payment-methods',
+  get_guest_sources:           '/api/analytics/guest-sources',
+  get_repeat_guests:           '/api/analytics/repeat-guests',
+  get_employee_performance:    '/api/analytics/employee-performance',
+  get_shift_performance:       '/api/analytics/shift-performance',
+  get_checkin_heatmap:         '/api/analytics/checkin-heatmap',
+  get_daily_revenue:           '/api/analytics/daily-revenue',
+  get_monthly_revenue:         '/api/analytics/monthly-revenue',
+  get_net_profit:              '/api/analytics/net-profit',
+  get_yoy_comparison:          '/api/analytics/yoy-comparison',
+  get_underperforming_rooms:   '/api/analytics/underperforming-rooms',
+  get_outstanding_bills:       '/api/analytics/outstanding-bills',
+  get_category_summary:        '/api/analytics/category-summary',
+  get_occupancy_by_location:   '/api/analytics/occupancy-by-location',
+  get_profit_per_location:     '/api/analytics/profit-per-location',
+  get_expense_breakdown:       '/api/analytics/expense-breakdown',
+};
+
+/**
+ * Derive REST endpoint from rpcName.
+ * Priority: explicit mapping → auto-convert (strip get_, replace _ with -)
+ */
+function rpcToEndpoint(rpcName) {
+  if (RPC_TO_ENDPOINT[rpcName]) return RPC_TO_ENDPOINT[rpcName];
+  // Fallback: get_foo_bar → /api/analytics/foo-bar
+  const slug = rpcName.replace(/^get_/, '').replace(/_/g, '-');
+  return `/api/analytics/${slug}`;
+}
+
+/**
+ * Convert Supabase-style p_* RPC params to flat REST query params.
+ * e.g. { p_lokasi: 'A', p_start_date: '2024-01-01' } → { lokasi: 'A', startDate: '2024-01-01' }
+ * Also strips pagination params (p_limit, p_offset) — hook adds page/limit itself.
+ */
+function normalizeParams(rawParams) {
+  if (!rawParams || typeof rawParams !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(rawParams)) {
+    if (k === 'p_limit' || k === 'p_offset') continue; // handled by pagination
+    if (v === undefined || v === null) continue;
+
+    // Strip p_ prefix and convert snake_case → camelCase
+    const clean = k.startsWith('p_') ? k.slice(2) : k;
+    const camel = clean.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    out[camel] = v;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// In-memory cache (stale-while-revalidate)
+// ---------------------------------------------------------------------------
 const _cache = new Map();
-const DEFAULT_STALE_MS = 5 * 60_000;   // 5 menit (revalidate latar)
-const DEFAULT_TTL_MS = 15 * 60_000;    // 15 menit (cache valid)
+const DEFAULT_STALE_MS = 5 * 60_000;   // 5 minutes
+const DEFAULT_TTL_MS   = 15 * 60_000;  // 15 minutes
 
 function makeCacheKey(rpcName, rpcParams) {
   return `${rpcName}::${JSON.stringify(rpcParams)}`;
 }
 
 /**
- * Generic hook untuk semua pemanggilan RPC analytics dengan dukungan
- * pagination server-side, in-memory cache (stale-while-revalidate), dan
- * `lastUpdated` timestamp untuk indikator freshness.
+ * Generic hook for all analytics RPC calls, now backed by REST endpoints.
+ * Interface is identical to the old Supabase-based version.
  *
  * @param {object} options
  * @param {string} options.rpcName
@@ -30,8 +80,8 @@ function makeCacheKey(rpcName, rpcParams) {
  * @param {number} [options.pageSize=10]
  * @param {boolean} [options.paginated=true]
  * @param {boolean} [options.enabled=true]
- * @param {number} [options.staleTimeMs=30000] - Setelah usia cache ini, refetch latar
- * @param {number} [options.ttlMs=300000]      - Setelah usia ini, anggap miss
+ * @param {number} [options.staleTimeMs]
+ * @param {number} [options.ttlMs]
  * @returns {{
  *   data: Array,
  *   totalCount: number,
@@ -66,12 +116,12 @@ export function useRpcQuery({
 
   const isMountedRef = useRef(true);
 
-  // Stable JSON of params for useEffect dependency
+  // Stable JSON for useEffect dependency — prevents infinite loops
   const paramsJson = JSON.stringify(params);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
-  // Reset to page 1 when params change
+  // Reset page when params change
   const prevParamsJsonRef = useRef(paramsJson);
   useEffect(() => {
     if (prevParamsJsonRef.current !== paramsJson) {
@@ -83,63 +133,51 @@ export function useRpcQuery({
   useEffect(() => {
     if (!enabled || !rpcName) return;
 
-    const paramsSnapshot = JSON.parse(paramsJson);
-
-    const rpcParams = {
-      ...paramsSnapshot,
-      ...(paginated
-        ? {
-            p_limit: pageSize,
-            p_offset: (currentPage - 1) * pageSize,
-          }
-        : {}),
+    const endpoint = rpcToEndpoint(rpcName);
+    const baseParams = normalizeParams(JSON.parse(paramsJson));
+    const queryParams = {
+      ...baseParams,
+      ...(paginated ? { page: currentPage, limit: pageSize } : {}),
     };
 
-    const cacheKey = makeCacheKey(rpcName, rpcParams);
+    const cacheKey = makeCacheKey(rpcName, queryParams);
     const cached = _cache.get(cacheKey);
     const now = Date.now();
 
     const isCacheUsable = cached && now - cached.fetchedAt < ttlMs;
-    const isCacheFresh = cached && now - cached.fetchedAt < staleTimeMs;
-
-    // Forced refresh (refreshTick changed) overrides cache.
+    const isCacheFresh  = cached && now - cached.fetchedAt < staleTimeMs;
     const forced = refreshTick > 0 && cached?.refreshAt !== refreshTick;
 
     if (isCacheUsable && !forced) {
-      // Cache hit — tampilkan instan
       setData(cached.data);
       setTotalCount(cached.totalCount);
       setLastUpdated(cached.fetchedAt);
       setIsLoading(false);
       setError(null);
-
-      if (isCacheFresh) return; // tidak perlu refetch
-      // Stale → refetch background
+      if (isCacheFresh) return;
       setIsRefetching(true);
     } else {
-      // Cache miss / TTL expired / forced
       setIsLoading(true);
       setError(null);
     }
 
     const fetchData = async () => {
-      const { data: result, error: rpcError } = await supabase.rpc(rpcName, rpcParams);
+      try {
+        const result = await api.get(endpoint, queryParams);
 
-      if (!isMountedRef.current) return;
+        if (!isMountedRef.current) return;
 
-      if (rpcError) {
-        setError(`Gagal memuat data. ${rpcError.message}`);
-        // Jangan kosongkan data lama bila ini refetch background; kalau cache miss → kosongkan.
-        if (!isCacheUsable) {
-          setData([]);
-          setTotalCount(0);
-        }
-      } else {
-        const rows = result || [];
-        const tc = rows[0]?.total_count ?? rows.length ?? 0;
+        // Normalise server response shapes:
+        //   { data: [...], total: N }  — paginated list
+        //   { data: [...] }            — unpaginated list
+        //   [...]                      — bare array
+        const rows = result?.data ?? (Array.isArray(result) ? result : []);
+        const tc   = result?.total ?? result?.count ?? rows.length;
+
         setData(rows);
         setTotalCount(tc);
         setLastUpdated(Date.now());
+        setError(null);
 
         _cache.set(cacheKey, {
           data: rows,
@@ -147,10 +185,15 @@ export function useRpcQuery({
           fetchedAt: Date.now(),
           refreshAt: refreshTick,
         });
+      } catch (err) {
+        if (!isMountedRef.current) return;
+        setError(err.message || 'Gagal memuat data. Silakan coba lagi.');
+      } finally {
+        if (isMountedRef.current) {
+          setIsLoading(false);
+          setIsRefetching(false);
+        }
       }
-
-      setIsLoading(false);
-      setIsRefetching(false);
     };
 
     fetchData();
@@ -159,9 +202,7 @@ export function useRpcQuery({
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
   const setPage = useCallback(
@@ -172,33 +213,41 @@ export function useRpcQuery({
     [totalPages]
   );
 
-  // Force refresh: invalidate cache + bump tick
+  // Force refresh: invalidate cache entry + bump tick
   const refresh = useCallback(() => {
+    const endpoint = rpcToEndpoint(rpcName);
+    const baseParams = normalizeParams(JSON.parse(paramsJson));
+    const queryParams = {
+      ...baseParams,
+      ...(paginated ? { page: currentPage, limit: pageSize } : {}),
+    };
+    const cacheKey = makeCacheKey(rpcName, queryParams);
+    _cache.delete(cacheKey);
     setRefreshTick((tick) => tick + 1);
-  }, []);
+  }, [rpcName, paramsJson, paginated, currentPage, pageSize]);
 
   /**
-   * Fetch ALL rows (tanpa pagination) sekali dengan p_limit besar.
-   * Berguna untuk export CSV. Tidak men-cache hasilnya, dan tidak mengubah
-   * state hook (tidak menggangu paginated UI).
-   *
-   * Catatan: untuk RPC yang pagination wajib (misal `get_repeat_guests`),
-   * memakai p_limit=1000, p_offset=0 — sesuai pola server-side pagination.
-   * Untuk dataset super besar di masa depan (>1000 rows), bisa diloop.
+   * Fetch ALL rows (no pagination) — for CSV export.
+   * Does not affect hook state.
    *
    * @returns {Promise<{ data: Array, error: string|null }>}
    */
   const fetchAll = useCallback(async () => {
     if (!rpcName) return { data: [], error: 'rpcName tidak diset' };
 
-    const paramsSnapshot = JSON.parse(paramsJson);
-    const rpcParams = {
-      ...paramsSnapshot,
-      ...(paginated ? { p_limit: 1000, p_offset: 0 } : {}),
-    };
-    const { data: result, error: rpcError } = await supabase.rpc(rpcName, rpcParams);
-    if (rpcError) return { data: [], error: rpcError.message };
-    return { data: result ?? [], error: null };
+    const endpoint = rpcToEndpoint(rpcName);
+    const baseParams = normalizeParams(JSON.parse(paramsJson));
+    const queryParams = paginated
+      ? { ...baseParams, page: 1, limit: 1000 }
+      : baseParams;
+
+    try {
+      const result = await api.get(endpoint, queryParams);
+      const rows = result?.data ?? (Array.isArray(result) ? result : []);
+      return { data: rows, error: null };
+    } catch (err) {
+      return { data: [], error: err.message || 'Fetch all failed' };
+    }
   }, [rpcName, paramsJson, paginated]);
 
   return {
@@ -217,8 +266,8 @@ export function useRpcQuery({
 }
 
 /**
- * Invalidasi seluruh in-memory cache. Berguna untuk tombol "Refresh"
- * global di header dashboard.
+ * Invalidate the entire in-memory cache.
+ * Call from a global "Refresh" button to force all analytics to refetch.
  */
 export function clearRpcCache() {
   _cache.clear();
