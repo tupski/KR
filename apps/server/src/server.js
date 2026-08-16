@@ -18,6 +18,9 @@ import { connectDatabase } from './config/database.js';
 // 3. Express app
 import { app } from './app.js';
 
+// 4. Cron scheduler
+import { startScheduler } from './jobs/scheduler.js';
+
 // ── Uncaught error safety nets ────────────────────────────────────────────────
 
 process.on('uncaughtException', (err) => {
@@ -36,6 +39,9 @@ async function start() {
   try {
     // Verify database is reachable before accepting traffic
     await connectDatabase();
+
+    // Start background cron jobs after DB is confirmed reachable
+    startScheduler();
 
     const server = app.listen(env.PORT, () => {
       console.log(`🚀 Server running on http://localhost:${env.PORT} [${env.NODE_ENV}]`);

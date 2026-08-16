@@ -7,13 +7,18 @@
 import express from 'express';
 import { corsMiddleware } from './middleware/cors.middleware.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import authRoutes         from './modules/auth/auth.routes.js';
-import storageRoutes      from './modules/storage/storage.routes.js';
-import usersRoutes        from './modules/users/users.routes.js';
-import transactionsRoutes from './modules/transactions/transactions.routes.js';
+import authRoutes          from './modules/auth/auth.routes.js';
+import storageRoutes       from './modules/storage/storage.routes.js';
+import usersRoutes         from './modules/users/users.routes.js';
+import transactionsRoutes  from './modules/transactions/transactions.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
-import settingsRoutes     from './modules/settings/settings.routes.js';
-import pengeluaranRoutes  from './modules/pengeluaran/pengeluaran.routes.js';
+import settingsRoutes      from './modules/settings/settings.routes.js';
+import pengeluaranRoutes   from './modules/pengeluaran/pengeluaran.routes.js';
+import analyticsRoutes     from './modules/analytics/analytics.routes.js';
+import financeRoutes       from './modules/finance/finance.routes.js';
+import requestsRoutes      from './modules/requests/requests.routes.js';
+import activityLogsRoutes  from './modules/activity-logs/activityLogs.routes.js';
+import locationsRoutes     from './modules/locations/locations.routes.js';
 
 const app = express();
 
@@ -28,13 +33,18 @@ app.get('/health', (_req, res) => {
 });
 
 // ── API routes ────────────────────────────────────────────────────────────────
-app.use('/api/auth',          authRoutes);
-app.use('/api/storage',       storageRoutes);
-app.use('/api/users',         usersRoutes);
-app.use('/api/transactions',  transactionsRoutes);
-app.use('/api/notifications', notificationsRoutes);
-app.use('/api/settings',      settingsRoutes);
-app.use('/api/pengeluaran',   pengeluaranRoutes);
+app.use('/api/auth',           authRoutes);
+app.use('/api/storage',        storageRoutes);
+app.use('/api/users',          usersRoutes);
+app.use('/api/transactions',   transactionsRoutes);
+app.use('/api/notifications',  notificationsRoutes);
+app.use('/api/settings',       settingsRoutes);
+app.use('/api/pengeluaran',    pengeluaranRoutes);
+app.use('/api/analytics',      analyticsRoutes);
+app.use('/api/finance',        financeRoutes);
+app.use('/api/requests',       requestsRoutes);
+app.use('/api/activity-logs',  activityLogsRoutes);
+app.use('/api/locations',      locationsRoutes);
 
 // ── 404 catch-all ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {
