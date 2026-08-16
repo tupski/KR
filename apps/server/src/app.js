@@ -7,8 +7,13 @@
 import express from 'express';
 import { corsMiddleware } from './middleware/cors.middleware.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import authRoutes from './modules/auth/auth.routes.js';
-import storageRoutes from './modules/storage/storage.routes.js';
+import authRoutes         from './modules/auth/auth.routes.js';
+import storageRoutes      from './modules/storage/storage.routes.js';
+import usersRoutes        from './modules/users/users.routes.js';
+import transactionsRoutes from './modules/transactions/transactions.routes.js';
+import notificationsRoutes from './modules/notifications/notifications.routes.js';
+import settingsRoutes     from './modules/settings/settings.routes.js';
+import pengeluaranRoutes  from './modules/pengeluaran/pengeluaran.routes.js';
 
 const app = express();
 
@@ -23,8 +28,13 @@ app.get('/health', (_req, res) => {
 });
 
 // ── API routes ────────────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/storage', storageRoutes);
+app.use('/api/auth',          authRoutes);
+app.use('/api/storage',       storageRoutes);
+app.use('/api/users',         usersRoutes);
+app.use('/api/transactions',  transactionsRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/settings',      settingsRoutes);
+app.use('/api/pengeluaran',   pengeluaranRoutes);
 
 // ── 404 catch-all ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {
