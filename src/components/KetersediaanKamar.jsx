@@ -16,9 +16,11 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { calcEndAt, getActiveTransaction, formatTimeWIB, capitalizeWords } from '@/lib/roomUtils';
+import { locationsApi } from '@/api/locations.api';
+import { transactionsApi } from '@/api/transactions.api';
+import { api } from '@/api/client';
 
 const INITIAL_VISIBLE_ROOMS = 8;
 const REPORT_PAGE_SIZE = 10;
@@ -250,93 +252,65 @@ const KetersediaanKamar = () => {
 
   const fetchRoomStatus = useCallback(async () => {
     setLoading(true);
-    
-    // Optimasi: Ambil transaksi dari 3 hari terakhir saja untuk performa,
-    // ATAU yang checkout_at nya masih null (masih aktif).
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: paidFees, error: paidError }, { data: assignments }] = await Promise.all([
-      supabase.from('nomor_kamar').select('*').order('lokasi').order('name'),
-      supabase.from('transactions')
-        .select('id, created_at, checkin_at, rental_duration, apartment_location, room_number, customer_name, checkout_at, user_id, cash_amount, transfer_amount, transfer_to, marketing_name, input_by, shift, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee')
-        .or(`checkin_at.gt.${threeDaysAgo.toISOString()},checkout_at.is.null`)
-        .order('checkin_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false }),
-      supabase.from('tagihan_fee_lunas').select('marketing_name, paid_at'),
-      supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id)
-    ]);
+    try {
+      // Use the REST API to fetch rooms with occupancy data
+      const response = await locationsApi.listRoomsWithOccupancy({});
+      const { rooms, transactions, paidFees } = response;
 
-    if (roomsError || transError) {
-      toast({ title: 'Gagal memuat data kamar', description: (roomsError || transError)?.message, variant: 'destructive' });
+      const now = new Date();
+
+      // Rooms are already filtered by the backend based on user role
+      const allRooms = rooms || [];
+      const allTransactions = transactions || [];
+      const allPaidFees = paidFees || [];
+
+      const roomStatus = allRooms.map((room) => {
+        const activeTx = getActiveTransaction(room.lokasi, room.name, allTransactions, now);
+
+        if (activeTx) {
+          const endAt = calcEndAt(activeTx);
+          return {
+            ...room,
+            tx: activeTx,
+            transactionId: activeTx.id,
+            transactionUserId: activeTx.user_id,
+            status: 'terisi',
+            readyAt: endAt,
+            customerName: activeTx.customer_name,
+            checkInTime: new Date(activeTx.checkin_at || activeTx.created_at),
+            feePaid: allPaidFees.some(pf =>
+              pf.marketing_name === activeTx.marketing_name &&
+              new Date(pf.paid_at).toDateString() === new Date(activeTx.checkin_at || activeTx.created_at).toDateString()
+            ),
+          };
+        }
+        return { ...room, tx: null, transactionId: null, transactionUserId: null, status: 'tersedia', readyAt: null, customerName: null, checkInTime: null };
+      });
+
+      const grouped = roomStatus.reduce((acc, room) => {
+        const loc = room.lokasi || 'Lainnya';
+        if (!acc[loc]) acc[loc] = [];
+        acc[loc].push(room);
+        return acc;
+      }, {});
+      Object.keys(grouped).forEach((loc) =>
+        grouped[loc].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      );
+
+      setGroupedRooms(grouped);
+    } catch (error) {
+      toast({ title: 'Gagal memuat data kamar', description: error.message, variant: 'destructive' });
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const now = new Date();
-    
-    // Filter rooms based on assignments for karyawan
-    let filteredRooms = allRooms || [];
-    if (userRole === 'karyawan' && assignments && assignments.length > 0) {
-      const assignedNames = assignments.map(a => a.location_name);
-      filteredRooms = filteredRooms.filter(r => assignedNames.includes(r.lokasi));
-    } else if (userRole === 'karyawan' && assignments && assignments.length === 0) {
-      // Jika karyawan belum diassign kemanapun, jangan tampilkan apa-apa atau batasi
-      filteredRooms = [];
-    }
-
-    const roomStatus = filteredRooms.map((room) => {
-      const activeTx = getActiveTransaction(room.lokasi, room.name, transactions, now);
-      
-      if (activeTx) {
-        const endAt = calcEndAt(activeTx);
-        return {
-          ...room,
-          tx: activeTx,
-          transactionId: activeTx.id,
-          transactionUserId: activeTx.user_id,
-          status: 'terisi',
-          readyAt: endAt,
-          customerName: activeTx.customer_name,
-          checkInTime: new Date(activeTx.checkin_at || activeTx.created_at),
-          feePaid: (paidFees || []).some(pf => 
-            pf.marketing_name === activeTx.marketing_name && 
-            new Date(pf.paid_at).toDateString() === new Date(activeTx.checkin_at || activeTx.created_at).toDateString()
-          ),
-        };
-      }
-      return { ...room, tx: null, transactionId: null, transactionUserId: null, status: 'tersedia', readyAt: null, customerName: null, checkInTime: null };
-    });
-
-    const grouped = roomStatus.reduce((acc, room) => {
-      const loc = room.lokasi || 'Lainnya';
-      if (!acc[loc]) acc[loc] = [];
-      acc[loc].push(room);
-      return acc;
-    }, {});
-    Object.keys(grouped).forEach((loc) =>
-      grouped[loc].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    );
-
-    setGroupedRooms(grouped);
-    setLoading(false);
   }, []);
-
-  const kamarRealtimeDebounceRef = useRef(null);
-  const debouncedFetchRoomStatus = useCallback(() => {
-    if (kamarRealtimeDebounceRef.current) clearTimeout(kamarRealtimeDebounceRef.current);
-    kamarRealtimeDebounceRef.current = setTimeout(() => fetchRoomStatus(), 1500);
-  }, [fetchRoomStatus]);
 
   useEffect(() => {
     fetchRoomStatus();
-    const channel = supabase
-      .channel('realtime-kamar-v2')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedFetchRoomStatus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'nomor_kamar' }, debouncedFetchRoomStatus)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [debouncedFetchRoomStatus]);
+    // Note: Realtime subscription removed during REST API migration
+    // Consider using WebSocket or polling for real-time updates if needed
+  }, [fetchRoomStatus]);
 
   const loadRoomReport = useCallback(async () => {
     setReportLoading(true);
@@ -355,64 +329,56 @@ const KetersediaanKamar = () => {
     const fromIso = fromDate.toISOString();
     const toIso = toDate.toISOString();
 
-    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: assignments }] = await Promise.all([
-      supabase.from('nomor_kamar').select('*').order('lokasi').order('name'),
-      supabase
-        .from('transactions')
-        .select('id, apartment_location, room_number, customer_name, checkin_at, created_at, cash_amount, transfer_amount')
-        .or(`and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`),
-      supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id),
-    ]);
-
-    if (roomsError || transError) {
-      toast({ title: 'Gagal memuat laporan kamar', description: (roomsError || transError)?.message, variant: 'destructive' });
-      setReportLoading(false);
-      return;
-    }
-
-    let filteredRooms = allRooms || [];
-    if (userRole === 'karyawan' && assignments && assignments.length > 0) {
-      const assignedNames = assignments.map((a) => a.location_name);
-      filteredRooms = filteredRooms.filter((r) => assignedNames.includes(r.lokasi));
-    } else if (userRole === 'karyawan' && assignments && assignments.length === 0) {
-      filteredRooms = [];
-    }
-
-    const txMap = new Map();
-    const txDetailMap = new Map();
-    (transactions || []).forEach((tx) => {
-      const key = `${tx.apartment_location || ''}__${tx.room_number || ''}`;
-      const current = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
-      current.jumlahDigunakan += 1;
-      current.pendapatan += Number(tx.cash_amount || 0) + Number(tx.transfer_amount || 0);
-      txMap.set(key, current);
-      const detailList = txDetailMap.get(key) || [];
-      detailList.push(tx);
-      txDetailMap.set(key, detailList);
-    });
-
-    const grouped = filteredRooms.reduce((acc, room) => {
-      const loc = room.lokasi || 'Lainnya';
-      if (!acc[loc]) acc[loc] = [];
-      const key = `${room.lokasi || ''}__${room.name || ''}`;
-      const agg = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
-      acc[loc].push({
-        ...room,
-        jumlahDigunakan: agg.jumlahDigunakan,
-        pendapatan: agg.pendapatan,
+    try {
+      // Use REST API to fetch rooms for report
+      const response = await locationsApi.listRoomsForReport({
+        startDate: fromIso,
+        endDate: toIso,
       });
-      return acc;
-    }, {});
+      const { rooms, transactions } = response;
 
-    Object.keys(grouped).forEach((loc) => {
-      grouped[loc].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    });
+      const allRooms = rooms || [];
+      const allTransactions = transactions || [];
 
-    setReportGroupedRooms(grouped);
-    setReportTransactionsByRoom(Object.fromEntries(txDetailMap));
-    setReportPageByLocation({});
-    setReportLoading(false);
-  }, [reportFilterType, reportMonth, reportStartDate, reportEndDate, user?.id, userRole]);
+      const txMap = new Map();
+      const txDetailMap = new Map();
+      allTransactions.forEach((tx) => {
+        const key = `${tx.apartment_location || ''}__${tx.room_number || ''}`;
+        const current = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
+        current.jumlahDigunakan += 1;
+        current.pendapatan += Number(tx.cash_amount || 0) + Number(tx.transfer_amount || 0);
+        txMap.set(key, current);
+        const detailList = txDetailMap.get(key) || [];
+        detailList.push(tx);
+        txDetailMap.set(key, detailList);
+      });
+
+      const grouped = allRooms.reduce((acc, room) => {
+        const loc = room.lokasi || 'Lainnya';
+        if (!acc[loc]) acc[loc] = [];
+        const key = `${room.lokasi || ''}__${room.name || ''}`;
+        const agg = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
+        acc[loc].push({
+          ...room,
+          jumlahDigunakan: agg.jumlahDigunakan,
+          pendapatan: agg.pendapatan,
+        });
+        return acc;
+      }, {});
+
+      Object.keys(grouped).forEach((loc) => {
+        grouped[loc].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      });
+
+      setReportGroupedRooms(grouped);
+      setReportTransactionsByRoom(Object.fromEntries(txDetailMap));
+      setReportPageByLocation({});
+    } catch (error) {
+      toast({ title: 'Gagal memuat laporan kamar', description: error.message, variant: 'destructive' });
+    } finally {
+      setReportLoading(false);
+    }
+  }, [reportFilterType, reportMonth, reportStartDate, reportEndDate]);
 
   const reportLocations = useMemo(
     () => ['ALL', ...Object.keys(reportGroupedRooms).sort((a, b) => a.localeCompare(b))],
@@ -441,19 +407,22 @@ const KetersediaanKamar = () => {
       return;
     }
     if (!window.confirm(`Yakin checkout ${room.name} (${room.lokasi})?`)) return;
-    const { error } = await supabase.from('transactions').update({ checkout_at: new Date().toISOString() }).eq('id', room.transactionId);
-    if (error) {
-      toast({ title: 'Gagal Check Out', description: error.message, variant: 'destructive' });
-    } else {
-      // Log activity
-      await supabase.rpc('log_activity', {
-        p_action: 'Checkout Manual',
-        p_details: `Customer: ${room.customerName}, Unit: ${room.lokasi} - ${room.name}`,
-        p_metadata: { transaction_id: room.transactionId }
+
+    try {
+      // Use REST API for checkout
+      await transactionsApi.checkout(room.transactionId);
+
+      // Log activity via API
+      await api.post('/api/activity-logs', {
+        action: 'Checkout Manual',
+        details: `Customer: ${room.customerName}, Unit: ${room.lokasi} - ${room.name}`,
+        metadata: { transaction_id: room.transactionId }
       });
 
       toast({ title: 'Check Out Berhasil ✅' });
       fetchRoomStatus();
+    } catch (error) {
+      toast({ title: 'Gagal Check Out', description: error.message, variant: 'destructive' });
     }
   };
 

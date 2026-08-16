@@ -5,7 +5,7 @@ import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, BarChart 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+import { transactionsApi } from '@/api/transactions.api.js';
 import { format, startOfMonth, addMonths } from 'date-fns';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF', '#FF1943'];
@@ -26,43 +26,39 @@ const OmsetChart = () => {
   const fetchData = async () => {
     const monthStart = startOfMonth(new Date(`${selectedMonth}-01`));
     const monthEndExclusive = addMonths(monthStart, 1);
-    const { data: transactions, error: transactionsError } = await supabase
-      .from('transactions')
-      .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
-      .gte('checkin_at', monthStart.toISOString())
-      .lt('checkin_at', monthEndExclusive.toISOString());
-    if (transactionsError) {
-      console.error("Error fetching transactions:", transactionsError);
-      return;
-    }
     
-    const lokasiStats = transactions.reduce((acc, t) => {
-      const omset = (t.cash_amount || 0) + (t.transfer_amount || 0);
-      if (t.apartment_location) {
-        if (!acc[t.apartment_location]) acc[t.apartment_location] = 0;
-        acc[t.apartment_location] += omset;
-      }
-      return acc;
-    }, {});
+    try {
+      // Fetch transactions via REST API with date filtering
+      const transactions = await transactionsApi.list({
+        startDate: monthStart.toISOString(),
+        endDate: monthEndExclusive.toISOString(),
+      });
+      
+      const lokasiStats = (transactions || []).reduce((acc, t) => {
+        const omset = (t.cash_amount || 0) + (t.transfer_amount || 0);
+        if (t.apartment_location) {
+          if (!acc[t.apartment_location]) acc[t.apartment_location] = 0;
+          acc[t.apartment_location] += omset;
+        }
+        return acc;
+      }, {});
 
-    const chartData = Object.keys(lokasiStats).map(lokasi => ({ name: lokasi, value: lokasiStats[lokasi] })).sort((a, b) => b.value - a.value);
-    setOmsetPerLokasi(chartData);
-    setTotalOmset(Object.values(lokasiStats).reduce((sum, val) => sum + val, 0));
+      const chartData = Object.keys(lokasiStats).map(lokasi => ({ name: lokasi, value: lokasiStats[lokasi] })).sort((a, b) => b.value - a.value);
+      setOmsetPerLokasi(chartData);
+      setTotalOmset(Object.values(lokasiStats).reduce((sum, val) => sum + val, 0));
 
-    const savedTarget = getTargetFromLocal();
-    setTarget(savedTarget);
-    setNewTarget(savedTarget.toString());
+      const savedTarget = getTargetFromLocal();
+      setTarget(savedTarget);
+      setNewTarget(savedTarget.toString());
+    } catch (error) {
+      console.error("Error fetching transactions:", error);
+    }
   };
   
   useEffect(() => {
     fetchData();
-    const channel = supabase.channel('realtime-omset-chart')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, fetchData)
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    // Note: Realtime subscription removed - REST API doesn't support realtime
+    // Data will refresh when selectedMonth changes or component remounts
   }, [selectedMonth]);
 
   const formatRupiah = (angka) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka);

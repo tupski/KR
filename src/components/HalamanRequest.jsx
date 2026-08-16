@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Send, PlusCircle, ChevronDown, Check, X, History, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { requestsApi } from '@/api/requests.api';
+import { locationsApi } from '@/api/locations.api';
 
 const HalamanRequest = () => {
     const { user, userRole } = useAuth();
@@ -33,28 +34,32 @@ const HalamanRequest = () => {
     const isAdminUser = userRole === 'admin' || userRole === 'super_admin';
 
     const fetchOptions = async () => {
-        const { data: lokasiData } = await supabase.from('lokasi_apartemen').select('name');
-        if (lokasiData) setLokasiOptions(lokasiData.map(l => l.name));
-        const { data: karyawanData } = await supabase.from('karyawan_list').select('name');
-        if (karyawanData) setKaryawanOptions(karyawanData.map(k => k.name));
+        try {
+            const lokasiData = await locationsApi.list();
+            if (lokasiData?.data) setLokasiOptions(lokasiData.data.map(l => l.name));
+            // Note: karyawan_list is deprecated; employee names come from user_profiles
+            // Keeping the state for backward compatibility if needed
+        } catch (err) {
+            console.error("Error fetching location options:", err);
+        }
     };
 
     const loadRequests = useCallback(async () => {
-        const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
-        if (error) {
-            console.error("Error fetching requests:", error);
-        } else {
-            setRequests(data);
+        try {
+            const result = await requestsApi.list();
+            // API returns { data, total, page, limit } - extract data array
+            setRequests(result.data || []);
+        } catch (err) {
+            console.error("Error fetching requests:", err);
+            toast({ title: "Error", description: "Gagal memuat data request", variant: "destructive" });
         }
     }, []);
 
     useEffect(() => {
         fetchOptions();
         loadRequests();
-        const channel = supabase.channel('public:requests')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, loadRequests)
-          .subscribe();
-        return () => supabase.removeChannel(channel);
+        // Realtime subscription removed - now using REST API polling or manual refresh
+        // If realtime is needed, implement WebSocket separately
     }, [loadRequests]);
 
     useEffect(() => {
@@ -75,56 +80,35 @@ const HalamanRequest = () => {
             return;
         }
 
-        const { error } = await supabase.from('requests').insert({
-            employee_name,
-            apartment_location,
-            request_type,
-            description,
-            desired_date,
-            amount: request_type === 'Request Kasbon' ? amount || null : null,
-            status: 'Pending',
-            user_id: user.id,
-        });
-
-        if (error) {
-            toast({ title: "Gagal mengirim request", description: error.message, variant: "destructive" });
-        } else {
-            // Log activity
-            await supabase.rpc('log_activity', {
-                p_action: 'Kirim Request',
-                p_details: `${request_type} oleh ${employee_name} untuk lokasi ${apartment_location}`,
-                p_metadata: { request_type, apartment_location }
+        try {
+            await requestsApi.create({
+                employee_name,
+                apartment_location,
+                request_type,
+                notes: description,
+                desired_date,
+                amount: request_type === 'Request Kasbon' ? amount || null : null,
             });
+            // Activity logging handled by backend
 
             toast({ title: "✅ Request berhasil dikirim!" });
             setIsFormOpen(false);
             setNewRequest({ employee_name: '', apartment_location: '', request_type: '', description: '', amount: '', desired_date: '' });
             loadRequests();
+        } catch (err) {
+            toast({ title: "Gagal mengirim request", description: err.message, variant: "destructive" });
         }
     };
 
     const handleUpdateRequestStatus = async (id, status) => {
         if (!isAdminUser) return;
-        const { data, error } = await supabase
-            .from('requests')
-            .update({ status })
-            .eq('id', id)
-            .select('id, status');
-        
-        if (error) {
-            toast({ title: "Gagal update status", description: error.message, variant: "destructive" });
-        } else if (!data || data.length === 0) {
-            toast({ title: "Request tidak berubah", description: "Kemungkinan dibatasi RLS. Jalankan update policy SQL terbaru.", variant: "destructive" });
-        } else {
-            // Log activity
-            await supabase.rpc('log_activity', {
-                p_action: 'Update Status Request',
-                p_details: `Request ID ${id} diubah statusnya menjadi ${status}`,
-                p_metadata: { request_id: id, new_status: status }
-            });
-
-            toast({ title: `Request ${status === 'Approved' ? 'disetujui' : 'ditolak'}!`, className: status === 'Approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white' });
+        try {
+            await requestsApi.updateStatus(id, { status });
+            // Activity logging handled by backend
+            toast({ title: `✅ Request ${status === 'Approved' ? 'disetujui' : 'ditolak'}!` });
             loadRequests();
+        } catch (err) {
+            toast({ title: "Gagal update status", description: err.message, variant: "destructive" });
         }
     };
 

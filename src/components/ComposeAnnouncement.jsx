@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Megaphone, X, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+import { settingsApi } from '@/api/settings.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 
 /**
@@ -26,26 +26,24 @@ const ComposeAnnouncement = ({ open, onOpenChange }) => {
       return;
     }
     setLoading(true);
-    const dedupe_key = `announcement-${Date.now()}`;
 
-    const { error } = await supabase.from('notifications').insert({
-      type: 'announcement',
-      title: title.trim() || 'Pengumuman',
-      body: body.trim(),
-      audience_role: 'all',
-      audience_user_id: null,
-      dedupe_key,
-    });
+    try {
+      await settingsApi.createAnnouncement({
+        type: 'announcement',
+        title: title.trim() || 'Pengumuman',
+        body: body.trim(),
+        audience_role: 'all',
+        audience_user_id: null,
+      });
 
-    setLoading(false);
-
-    if (error) {
-      toast({ title: 'Gagal mengirim pengumuman', description: error.message, variant: 'destructive' });
-    } else {
       toast({ title: '📢 Pengumuman terkirim!', description: 'Semua pengguna akan melihat pengumuman ini.' });
       setTitle('');
       setBody('');
       onOpenChange(false);
+    } catch (error) {
+      toast({ title: 'Gagal mengirim pengumuman', description: error.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
     }
   };
 

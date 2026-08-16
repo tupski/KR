@@ -254,6 +254,53 @@ export async function createUser({ email, passwordHash, full_name, phone, gender
 }
 
 /**
+ * Update a user's profile and role.
+ *
+ * @param {string} userId
+ * @param {{ full_name?: string, phone?: string, gender?: string, role?: string }} data
+ * @returns {Promise<object>} Updated user row
+ * @throws {NotFoundError} If user does not exist
+ */
+export async function updateUser(userId, { full_name, phone, gender, role }) {
+  const { pool } = await import('../../config/database.js');
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Update profile
+    if (full_name !== undefined || phone !== undefined || gender !== undefined) {
+      await client.query(
+        `UPDATE user_profiles
+         SET full_name = COALESCE($2, full_name),
+             phone = COALESCE($3, phone),
+             gender = COALESCE($4, gender)
+         WHERE id = $1`,
+        [userId, full_name, phone, gender],
+      );
+    }
+
+    // Update role
+    if (role !== undefined) {
+      await client.query(
+        `UPDATE user_roles SET role = $2 WHERE user_id = $1`,
+        [userId, role],
+      );
+    }
+
+    await client.query('COMMIT');
+
+    // Return updated user
+    return await getUserById(userId);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Delete a user by ID (cascade handles profiles, roles, sessions).
  *
  * @param {string} userId
@@ -284,6 +331,46 @@ export async function resetUserPassword(userId, newPasswordHash) {
   );
   if (!result.rows[0]) {
     throw new NotFoundError('User not found');
+  }
+}
+
+/**
+ * Sign out all devices for a user by deleting all their sessions.
+ *
+ * @param {string} userId
+ * @returns {Promise<void>}
+ */
+export async function signOutAllDevices(userId) {
+  await query(
+    'DELETE FROM sessions WHERE user_id = $1',
+    [userId],
+  );
+}
+
+/**
+ * Toggle a location assignment for a user.
+ *
+ * @param {string} userId
+ * @param {string} locationName
+ * @param {boolean} assigned
+ * @returns {Promise<void>}
+ */
+export async function toggleUserLocation(userId, locationName, assigned) {
+  if (assigned) {
+    // Add assignment
+    await query(
+      `INSERT INTO user_location_assignments (user_id, location_name)
+       VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [userId, locationName],
+    );
+  } else {
+    // Remove assignment
+    await query(
+      `DELETE FROM user_location_assignments
+       WHERE user_id = $1 AND location_name = $2`,
+      [userId, locationName],
+    );
   }
 }
 

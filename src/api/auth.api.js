@@ -56,4 +56,28 @@ export const authApi = {
    * @returns {{ role }}
    */
   getMyRole: () => api.get('/api/users/me/role'),
+
+  /**
+   * POST /api/auth/sign-out-all-devices
+   * Revoke all refresh tokens for current user (sign out from all devices).
+   * @returns {{ success: boolean }}
+   */
+  signOutAllDevices: () => api.post('/api/auth/sign-out-all-devices'),
+
+  /**
+   * PUT /api/auth/password
+   * Change password (requires re-authentication with old password).
+   * @param {string} oldPassword - Current password for verification
+   * @param {string} newPassword - New password to set
+   * @returns {{ success: boolean }}
+   */
+  changePassword: (oldPassword, newPassword) => api.put('/api/auth/password', { oldPassword, newPassword }),
+
+  /**
+   * PUT /api/auth/metadata
+   * Update user metadata (e.g., full_name, avatar_url).
+   * @param {object} metadata - Metadata fields to update
+   * @returns {{ user: object }}
+   */
+  updateMetadata: (metadata) => api.put('/api/auth/metadata', metadata),
 };

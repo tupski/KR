@@ -30,12 +30,12 @@ export async function listRequests(req, res, next) {
 /** POST /api/requests */
 export async function createRequest(req, res, next) {
   try {
-    const { request_type, apartment_location, desired_date, notes, employee_name } = req.body;
+    const { request_type, apartment_location, desired_date, notes, employee_name, amount } = req.body;
     if (!request_type) {
       throw new ValidationError('request_type is required');
     }
     const data = await requestsService.createRequest(
-      { request_type, apartment_location, desired_date, notes, employee_name },
+      { request_type, apartment_location, desired_date, notes, employee_name, amount },
       req.user.id,
     );
     res.status(201).json({ data });

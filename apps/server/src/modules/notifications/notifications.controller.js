@@ -35,6 +35,10 @@ const sendPushSchema = z.object({
   audience_user_id: z.string().uuid().optional().nullable(),
 });
 
+const notificationIdsSchema = z.object({
+  notification_ids: z.array(z.string().uuid()).min(1, 'notification_ids is required'),
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -73,6 +77,24 @@ export async function listNotifications(req, res, next) {
       limit,
     });
     res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/notifications/unread-count
+ * Get unread notification count for the authenticated user.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function getUnreadCount(req, res, next) {
+  try {
+    const count = await notifService.getUnreadCount({
+      userId: req.user.id,
+      role:   req.user.role,
+    });
+    res.status(200).json({ count });
   } catch (err) {
     next(err);
   }
@@ -167,6 +189,70 @@ export async function sendPush(req, res, next) {
     const data    = validate(sendPushSchema, req.body);
     const results = await pushService.sendPushToAudience(data);
     res.status(200).json({ ok: true, ...results });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/notifications/mark-read
+ * Mark multiple notifications as read for the authenticated user.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function markNotificationsRead(req, res, next) {
+  try {
+    const { notification_ids } = validate(notificationIdsSchema, req.body);
+    await notifService.markNotificationsRead(notification_ids, req.user.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/notifications/hide
+ * Hide multiple notifications for the authenticated user.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function hideNotifications(req, res, next) {
+  try {
+    const { notification_ids } = validate(notificationIdsSchema, req.body);
+    await notifService.hideNotifications(notification_ids, req.user.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/notifications/read-status
+ * Get read status for multiple notifications.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function getReadStatus(req, res, next) {
+  try {
+    const { notification_ids } = validate(notificationIdsSchema, req.body);
+    const readSet = await notifService.getReadStatus(notification_ids, req.user.id);
+    res.status(200).json({ read_ids: Array.from(readSet) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/notifications/hidden-status
+ * Get hidden status for multiple notifications.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function getHiddenStatus(req, res, next) {
+  try {
+    const { notification_ids } = validate(notificationIdsSchema, req.body);
+    const hiddenSet = await notifService.getHiddenStatus(notification_ids, req.user.id);
+    res.status(200).json({ hidden_ids: Array.from(hiddenSet) });
   } catch (err) {
     next(err);
   }

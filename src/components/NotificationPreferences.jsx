@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+import { notificationsApi } from '@/api/notifications.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 
 const TYPE_OPTIONS = [
@@ -40,12 +40,7 @@ export default function NotificationPreferences({ open, onOpenChange }) {
     if (!userId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('notification_preferences')
-        .select('push_enabled, types_enabled')
-        .eq('user_id', userId)
-        .maybeSingle();
-      if (error) throw error;
+      const data = await notificationsApi.getPreferences();
 
       setPushEnabled(data?.push_enabled ?? true);
       const raw = normalizeTypesEnabled(data?.types_enabled);
@@ -74,14 +69,10 @@ export default function NotificationPreferences({ open, onOpenChange }) {
     if (!userId) return;
     setSaving(true);
     try {
-      const payload = {
-        user_id: userId,
+      await notificationsApi.updatePreferences({
         push_enabled: !!pushEnabled,
         types_enabled: typesEnabled,
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from('notification_preferences').upsert(payload, { onConflict: 'user_id' });
-      if (error) throw error;
+      });
       toast({ title: 'Preferensi disimpan ✅' });
       onOpenChange(false);
     } catch (e) {

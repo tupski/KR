@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/lib/customSupabaseClient';
+import { locationsApi } from '@/api/locations.api.js';
+import { usersApi } from '@/api/users.api.js';
 import { getRentalConfig } from '@/lib/roomUtils';
 
 const RENTAL_TYPE_OPTIONS = [
@@ -36,15 +37,40 @@ const parseCheckInDate = (value) => {
   return parsed;
 };
 
-const AutocompleteInput = ({ table, value, onValueChange }) => {
+/**
+ * Autocomplete input for locations, rooms, and marketing.
+ * @param {'locations'|'rooms'|'marketing'} type - The type of autocomplete
+ * @param {string} value - Current input value
+ * @param {function} onValueChange - Callback when value changes
+ * @param {string} [location] - Optional location filter for rooms
+ */
+const AutocompleteInput = ({ type, value, onValueChange, location }) => {
   const [listItems, setListItems] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
 
   useEffect(() => {
-    supabase.from(table).select('name').then(({ data }) => {
-      if (data) setListItems(data);
-    });
-  }, [table]);
+    const fetchData = async () => {
+      try {
+        if (type === 'locations') {
+          const data = await locationsApi.list();
+          // Locations API returns array of { name: string }
+          setListItems((data || []).map(item => ({ name: item.name || item })));
+        } else if (type === 'rooms') {
+          const data = await locationsApi.listRoomsWithOccupancy({ location });
+          // Rooms API returns array with room_number field
+          setListItems((data || []).map(item => ({ name: item.room_number })));
+        } else if (type === 'marketing') {
+          const data = await usersApi.list({ role: 'marketing' });
+          // Users API returns array with name field
+          setListItems((data || []).map(item => ({ name: item.name })));
+        }
+      } catch (err) {
+        console.error(`Error fetching ${type}:`, err);
+        setListItems([]);
+      }
+    };
+    fetchData();
+  }, [type, location]);
 
   const handleChange = (e) => {
     const v = e.target.value;
@@ -141,18 +167,18 @@ const EditTransaksiModal = ({ transaksi, onClose, onSave }) => {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-2 block text-sm font-semibold text-gray-700">Lokasi</label>
-              <AutocompleteInput table="lokasi_apartemen" value={formData.apartment_location || ''} onValueChange={(v) => set('apartment_location', v)} />
+              <AutocompleteInput type="locations" value={formData.apartment_location || ''} onValueChange={(v) => set('apartment_location', v)} />
             </div>
             <div>
               <label className="mb-2 block text-sm font-semibold text-gray-700">Kamar</label>
-              <AutocompleteInput table="nomor_kamar" value={formData.room_number || ''} onValueChange={(v) => set('room_number', v)} />
+              <AutocompleteInput type="rooms" location={formData.apartment_location} value={formData.room_number || ''} onValueChange={(v) => set('room_number', v)} />
             </div>
           </div>
 
           {/* Marketing */}
           <div>
             <label className="mb-2 block text-sm font-semibold text-gray-700">Marketing</label>
-            <AutocompleteInput table="marketing_list" value={formData.marketing_name || ''} onValueChange={(v) => set('marketing_name', v)} />
+            <AutocompleteInput type="marketing" value={formData.marketing_name || ''} onValueChange={(v) => set('marketing_name', v)} />
           </div>
 
           <div>

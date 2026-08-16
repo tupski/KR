@@ -12,7 +12,7 @@ import HalamanTagihan from '@/components/HalamanTagihan';
 import HalamanRequest from '@/components/HalamanRequest';
 import SuperAdminDashboard from '@/components/SuperAdminDashboard';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import Auth from '@/components/Auth';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
@@ -22,7 +22,8 @@ import NotificationsInbox from '@/components/NotificationsInbox';
 import AllNotifications from '@/components/AllNotifications';
 import AnnouncementBanner from '@/components/AnnouncementBanner';
 import ComposeAnnouncement from '@/components/ComposeAnnouncement';
-import { supabase } from '@/lib/customSupabaseClient';
+import { settingsApi } from '@/api/settings.api';
+import { notificationsApi } from '@/api/notifications.api';
 import AccountSettings from '@/components/AccountSettings';
 import KalenderLibur from '@/components/KalenderLibur';
 import {
@@ -72,7 +73,7 @@ function App() {
   const [showMoreMenus, setShowMoreMenus] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
   const [showKalender, setShowKalender] = useState(false);
-  const correctPin = '212198';
+  const correctPin = import.meta.env.VITE_APP_PIN || '212198';
 
   const [isMaintenance, setIsMaintenance] = useState(false);
   const [appName, setAppName] = useState('Kakarama Room');
@@ -92,127 +93,54 @@ function App() {
   }, [now]);
 
   useEffect(() => {
+    let mounted = true;
+
     const fetchSettings = async () => {
-      const { data } = await supabase.from('system_settings').select('*');
-      if (data) {
-        const m = data.find(s => s.key === 'maintenance_mode');
-        const n = data.find(s => s.key === 'app_name');
-        if (m) setIsMaintenance(m.value === true);
-        if (n) {
-          setAppName(n.value);
-          document.title = n.value;
+      try {
+        const data = await settingsApi.getAll();
+        if (!mounted || !data) return;
+
+        // Settings API returns a key-value map
+        if (data.maintenance_mode !== undefined) {
+          setIsMaintenance(data.maintenance_mode === true);
         }
+        if (data.app_name) {
+          setAppName(data.app_name);
+          document.title = data.app_name;
+        }
+      } catch (err) {
+        console.error('[App.jsx] Failed to fetch settings:', err);
       }
     };
+
     fetchSettings();
 
-    // Realtime settings
-    const channel = supabase
-      .channel('system_settings_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, fetchSettings)
-      .subscribe();
+    // Optional: Poll settings every 5 minutes instead of realtime
+    const interval = setInterval(fetchSettings, 5 * 60 * 1000);
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  const audienceFilter = useMemo(() => {
-    const userId = session?.user?.id;
-    if (!userId) return null;
-    if (userRole === 'super_admin') return `audience_user_id.eq.${userId},audience_role.eq.super_admin,audience_role.eq.admin,audience_role.eq.all`;
-    if (userRole === 'admin') return `audience_user_id.eq.${userId},audience_role.eq.admin,audience_role.eq.all`;
-    return `audience_user_id.eq.${userId},audience_role.eq.all`;
-  }, [session?.user?.id, userRole]);
-
   /**
-   * Helper: chunk array into pieces of max `size` elements.
-   */
-  const chunkArray = (arr, size) => {
-    const chunks = [];
-    for (let i = 0; i < arr.length; i += size) {
-      chunks.push(arr.slice(i, i + size));
-    }
-    return chunks;
-  };
-
-  /**
-   * Fetch reads/hidden for a set of notification IDs using chunked requests.
-   * Returns { reads: Set<string>, hidden: Set<string> }.
-   * Uses Promise.allSettled so partial failure doesn't break everything.
-   */
-  const fetchReadsAndHidden = async (userId, ids, chunkSize = 20) => {
-    const readSet = new Set();
-    const hiddenSet = new Set();
-
-    const readChunks = chunkArray(ids, chunkSize);
-    const hiddenChunks = chunkArray(ids, chunkSize);
-
-    // Deduplicate IDs
-    const uniqueIds = [...new Set(ids)];
-
-    // Fetch reads in chunks
-    const readResults = await Promise.allSettled(
-      readChunks.map((chunk) =>
-        supabase
-          .from('notification_reads')
-          .select('notification_id')
-          .eq('user_id', userId)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-
-    for (const result of readResults) {
-      if (result.status === 'fulfilled' && result.value?.data) {
-        for (const r of result.value.data) {
-          readSet.add(r.notification_id);
-        }
-      } else if (result.status === 'rejected') {
-        console.warn('[App.jsx] notification_reads fetch chunk failed:', result.reason?.message || result.reason);
-      }
-    }
-
-    // Fetch hidden in chunks
-    const hiddenResults = await Promise.allSettled(
-      hiddenChunks.map((chunk) =>
-        supabase
-          .from('notification_hidden')
-          .select('notification_id')
-          .eq('user_id', userId)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-
-    for (const result of hiddenResults) {
-      if (result.status === 'fulfilled' && result.value?.data) {
-        for (const h of result.value.data) {
-          hiddenSet.add(h.notification_id);
-        }
-      } else if (result.status === 'rejected') {
-        console.warn('[App.jsx] notification_hidden fetch chunk failed:', result.reason?.message || result.reason);
-      }
-    }
-
-    return { readSet, hiddenSet };
-  };
-
-  /**
-   * Refresh unread badge — debounced & throttled.
+   * Refresh unread badge — uses REST API to fetch unread count.
    * Does NOT throw; errors are logged as warnings.
    * Skips refetch if document is not visible.
    */
   const refreshUnread = async () => {
     const userId = session?.user?.id;
-    if (!userId || !audienceFilter) return;
+    if (!userId) return;
 
     // Skip if document is not visible
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-      console.log('[App.jsx] refreshUnread skipped — document not visible');
       return;
     }
 
     // Skip if form is dirty
     const isFormDirty = localStorage.getItem('kr:form-dirty') === '1';
     if (isFormDirty) {
-      console.log('[App.jsx] refreshUnread skipped — form is dirty');
       return;
     }
 
@@ -220,76 +148,32 @@ function App() {
     const now = Date.now();
     const elapsed = now - lastNotifFetchRef.current;
     if (elapsed < 60_000) {
-      console.log('[App.jsx] refreshUnread throttled — last fetch', Math.round(elapsed / 1000), 's ago');
       return;
     }
 
-    // Clear any pending debounce timer
-    if (notifFetchTimerRef.current) {
-      clearTimeout(notifFetchTimerRef.current);
-    }
-
-    console.log('[App.jsx] fetchNotifications — starting fetch for badge');
-
     try {
-      // Ambil notifikasi (limit 200 max untuk mencegah URL terlalu panjang)
-      const { data: notif, error: nErr } = await supabase
-        .from('notifications')
-        .select('id')
-        .or(audienceFilter)
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (nErr) {
-        console.warn('[App.jsx] notification fetch failed:', nErr.message);
-        return; // Don't throw, don't set unreadCount to 0 on network error
-      }
-
-      const ids = (notif || []).map((n) => n.id);
-      if (!ids.length) {
-        setUnreadCount(0);
-        lastNotifFetchRef.current = Date.now();
-        return;
-      }
-
-      // Fetch reads & hidden using chunked requests
-      const { readSet, hiddenSet } = await fetchReadsAndHidden(userId, ids, 20);
-
-      const visibleIds = ids.filter((id) => !hiddenSet.has(id));
-      setUnreadCount(visibleIds.filter((id) => !readSet.has(id)).length);
+      const { count } = await notificationsApi.getUnreadCount();
+      setUnreadCount(count ?? 0);
       lastNotifFetchRef.current = Date.now();
     } catch (error) {
-      console.warn('[App.jsx] refreshUnread unexpected error:', error?.message || error);
+      console.warn('[App.jsx] refreshUnread error:', error?.message || error);
       // Don't throw to error boundary — silently fail
     }
   };
 
+  // Notification badge effect — poll every 60 seconds instead of realtime
   useEffect(() => {
-    console.log('[App.jsx] useEffect — notification badge setup for user:', session?.user?.id);
     if (!session?.user?.id) return;
+
     refreshUnread();
 
-    const channel = supabase
-      .channel(`notif_badge_${session.user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
-        console.log('[App.jsx] postgres_changes — notifications table changed');
-        refreshUnread();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, () => {
-        console.log('[App.jsx] postgres_changes — notification_reads table changed');
-        refreshUnread();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, () => {
-        console.log('[App.jsx] postgres_changes — notification_hidden table changed');
-        refreshUnread();
-      })
-      .subscribe();
+    // Poll every 60 seconds for unread count
+    const interval = setInterval(refreshUnread, 60_000);
 
     return () => {
-      console.log('[App.jsx] cleanup — removing notification badge channel');
-      supabase.removeChannel(channel);
+      clearInterval(interval);
     };
-  }, [session?.user?.id, audienceFilter]);
+  }, [session?.user?.id]);
 
   // FIX: Proper mount/unmount detection — only fires once on real mount/unmount
   useEffect(() => {

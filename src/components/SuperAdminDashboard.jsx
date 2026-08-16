@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/customSupabaseClient';
 import {
   Shield, Users, Settings, Activity, Building2, 
   History, BarChart3, DoorOpen, LayoutGrid, Server
@@ -15,6 +14,11 @@ import LocationRoomManager from './admin/LocationRoomManager';
 import ActivityLogViewer from './admin/ActivityLogViewer';
 import GlobalSettings from './GlobalSettings';
 
+// API modules
+import { usersApi } from '../api/users.api.js';
+import { locationsApi } from '../api/locations.api.js';
+import { activityLogsApi } from '../api/activityLogs.api.js';
+
 const SuperAdminDashboard = () => {
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -28,19 +32,29 @@ const SuperAdminDashboard = () => {
   const fetchStats = async () => {
     try {
       setLoading(true);
-      const { data: users } = await supabase.from('user_profiles').select('id');
-      const { data: locations } = await supabase.from('lokasi_apartemen').select('id');
-      const { data: rooms } = await supabase.from('nomor_kamar').select('id');
-      const { data: logs } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(5);
+      
+      // Fetch all stats in parallel
+      const [usersRes, locationsRes, logsRes] = await Promise.all([
+        usersApi.list({ limit: 1000 }),
+        locationsApi.list(),
+        activityLogsApi.list({ limit: 5 })
+      ]);
+
+      // Calculate total rooms from locations
+      let totalRooms = 0;
+      if (locationsRes?.data) {
+        totalRooms = locationsRes.data.reduce((acc, loc) => acc + (loc.room_count || 0), 0);
+      }
 
       setStats({
-        totalUsers: users?.length || 0,
-        totalLocations: locations?.length || 0,
-        totalRooms: rooms?.length || 0,
-        recentLogs: logs || []
+        totalUsers: usersRes?.data?.length || 0,
+        totalLocations: locationsRes?.data?.length || 0,
+        totalRooms,
+        recentLogs: logsRes?.data || []
       });
     } catch (error) {
       console.error(error);
+      toast.error('Gagal memuat statistik');
     } finally {
       setLoading(false);
     }
@@ -65,102 +79,120 @@ const SuperAdminDashboard = () => {
         <div className="absolute top-0 right-0 p-8 opacity-10">
           <Settings className="h-32 w-32" />
         </div>
-        <div className="relative z-10 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-black tracking-tight">Pengaturan Aplikasi</h1>
-            <p className="text-blue-100 text-sm mt-1">Kelola karyawan, unit apartemen, dan pantau operasional sistem.</p>
+        <div className="relative z-10">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+              <Shield className="h-8 w-8" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">Super Admin Dashboard</h1>
+              <p className="text-blue-100">System Administration & Management</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <div className="overflow-x-auto pb-2 scrollbar-hide">
-          <TabsList className="inline-flex w-auto p-1 bg-slate-100 rounded-2xl h-12">
-            <TabsTrigger value="overview" className="rounded-xl px-6 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <BarChart3 className="h-4 w-4 mr-2" /> Ringkasan
-            </TabsTrigger>
-            <TabsTrigger value="users" className="rounded-xl px-6 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <Users className="h-4 w-4 mr-2" /> Karyawan
-            </TabsTrigger>
-            <TabsTrigger value="inventory" className="rounded-xl px-6 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <Building2 className="h-4 w-4 mr-2" /> Apartemen
-            </TabsTrigger>
-            <TabsTrigger value="logs" className="rounded-xl px-6 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <History className="h-4 w-4 mr-2" /> Log Aktivitas
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="rounded-xl px-6 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <Settings className="h-4 w-4 mr-2" /> Pengaturan
-            </TabsTrigger>
-          </TabsList>
-        </div>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-0 shadow-lg">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-blue-600 font-medium">Total Users</p>
+                <h2 className="text-3xl font-bold text-blue-900">{stats.totalUsers}</h2>
+              </div>
+              <div className="p-3 bg-blue-200 rounded-xl">
+                <Users className="h-6 w-6 text-blue-700" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100 border-0 shadow-lg">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-emerald-600 font-medium">Locations</p>
+                <h2 className="text-3xl font-bold text-emerald-900">{stats.totalLocations}</h2>
+              </div>
+              <div className="p-3 bg-emerald-200 rounded-xl">
+                <Building2 className="h-6 w-6 text-emerald-700" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-0 shadow-lg">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-purple-600 font-medium">Total Rooms</p>
+                <h2 className="text-3xl font-bold text-purple-900">{stats.totalRooms}</h2>
+              </div>
+              <div className="p-3 bg-purple-200 rounded-xl">
+                <DoorOpen className="h-6 w-6 text-purple-700" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-5 bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm p-1">
+          <TabsTrigger value="overview" className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+            <LayoutGrid className="h-4 w-4 mr-2" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="users" className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+            <Users className="h-4 w-4 mr-2" />
+            Users
+          </TabsTrigger>
+          <TabsTrigger value="inventory" className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+            <Building2 className="h-4 w-4 mr-2" />
+            Inventory
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+            <History className="h-4 w-4 mr-2" />
+            Logs
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+            <Settings className="h-4 w-4 mr-2" />
+            Settings
+          </TabsTrigger>
+        </TabsList>
 
         {/* --- Overview Tab --- */}
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <Card className="rounded-3xl border-slate-100 shadow-sm overflow-hidden bg-white group hover:border-blue-200 transition-colors">
-              <CardContent className="p-6">
-                <div className="h-10 w-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                  <Users className="h-5 w-5" />
-                </div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total User</p>
-                <h3 className="text-3xl font-black text-slate-900 mt-1">{stats.totalUsers}</h3>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-3xl border-slate-100 shadow-sm overflow-hidden bg-white group hover:border-blue-200 transition-colors">
-              <CardContent className="p-6">
-                <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                  <Building2 className="h-5 w-5" />
-                </div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Lokasi</p>
-                <h3 className="text-3xl font-black text-slate-900 mt-1">{stats.totalLocations}</h3>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-3xl border-slate-100 shadow-sm overflow-hidden bg-white group hover:border-blue-200 transition-colors col-span-2 md:col-span-1">
-              <CardContent className="p-6">
-                <div className="h-10 w-10 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                  <DoorOpen className="h-5 w-5" />
-                </div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Unit</p>
-                <h3 className="text-3xl font-black text-slate-900 mt-1">{stats.totalRooms}</h3>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="rounded-3xl border-slate-100 shadow-sm overflow-hidden bg-white">
-            <CardHeader className="border-b border-slate-50 bg-slate-50/50">
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <Activity className="h-4 w-4 text-blue-600" /> Aktivitas Terakhir
+        <TabsContent value="overview">
+          <Card className="bg-white/80 backdrop-blur-sm shadow-lg rounded-2xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5 text-blue-600" />
+                Recent Activity
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
-              {stats.recentLogs.length > 0 ? (
-                <div className="divide-y divide-slate-50">
-                  {stats.recentLogs.map((log) => (
-                    <div key={log.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">
-                          {log.user_name?.[0]?.toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-slate-800">{log.action}</p>
-                          <p className="text-[10px] text-slate-400">{log.user_name} • {new Date(log.created_at).toLocaleString('id-ID')}</p>
-                        </div>
+            <CardContent>
+              <div className="space-y-4">
+                {stats.recentLogs.length === 0 ? (
+                  <p className="text-center text-slate-400 py-8">No recent activity</p>
+                ) : (
+                  stats.recentLogs.map((log, index) => (
+                    <div key={log.id || index} className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl">
+                      <div className="p-2 bg-blue-100 rounded-lg">
+                        <Activity className="h-4 w-4 text-blue-600" />
                       </div>
-                      <ChevronRight className="h-4 w-4 text-slate-300" />
+                      <div className="flex-1">
+                        <p className="font-medium text-slate-900">{log.action || log.description}</p>
+                        <p className="text-sm text-slate-500">{log.created_at ? new Date(log.created_at).toLocaleString('id-ID') : ''}</p>
+                      </div>
+                      {log.user_name && (
+                        <Badge variant="secondary" className="bg-slate-200 text-slate-700">
+                          {log.user_name}
+                        </Badge>
+                      )}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 text-center text-slate-400 text-sm italic">
-                  Belum ada aktivitas tercatat.
-                </div>
-              )}
-              <div className="p-3 bg-slate-50 text-center border-t border-slate-100">
-                <button onClick={() => setActiveTab('logs')} className="text-xs font-bold text-blue-600 hover:underline">
-                  Lihat Semua Log
-                </button>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>

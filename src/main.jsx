@@ -5,8 +5,6 @@ import '@/index.css';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/contexts/AuthContext';
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/react';
 import { checkAppUpdate } from '@/utils/checkAppUpdate';
 
 // Cek update aplikasi setelah render — jangan block render & jangan clear storage saat startup
@@ -20,8 +18,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <AuthProvider>
       <App />
       <Toaster />
-      <Analytics />
-      <SpeedInsights />
     </AuthProvider>
   </BrowserRouter>
 );

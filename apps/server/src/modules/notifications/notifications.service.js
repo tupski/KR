@@ -57,6 +57,32 @@ export async function listNotifications({ userId, role, page = 1, limit = 20 }) 
 }
 
 /**
+ * Get unread notification count for a user.
+ * Counts notifications visible to the user that haven't been read yet.
+ *
+ * @param {{ userId: string, role: string }} opts
+ * @returns {Promise<number>} Unread count
+ */
+export async function getUnreadCount({ userId, role }) {
+  const result = await query(
+    `SELECT COUNT(*) AS count
+     FROM notifications n
+     WHERE
+       (n.audience_role = $1 OR n.target_user_id = $2 OR (n.audience_role IS NULL AND n.target_user_id IS NULL))
+       AND NOT EXISTS (
+         SELECT 1 FROM notification_hidden nh
+         WHERE nh.notification_id = n.id AND nh.user_id = $2
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM notification_reads nr
+         WHERE nr.notification_id = n.id AND nr.user_id = $2
+       )`,
+    [role, userId],
+  );
+  return Number(result.rows[0].count);
+}
+
+/**
  * Hide a notification for a specific user (soft-delete via junction table).
  *
  * @param {string} notificationId - UUID
@@ -70,6 +96,77 @@ export async function hideNotification(notificationId, userId) {
      ON CONFLICT DO NOTHING`,
     [notificationId, userId],
   );
+}
+
+/**
+ * Hide multiple notifications for a user (bulk operation).
+ *
+ * @param {string[]} notificationIds - Array of UUIDs
+ * @param {string} userId - UUID
+ * @returns {Promise<void>}
+ */
+export async function hideNotifications(notificationIds, userId) {
+  if (!notificationIds?.length) return;
+  const values = notificationIds.map(() => '(?, ?)').join(', ');
+  const params = notificationIds.flatMap((id) => [id, userId]);
+  // Use UNNEST for efficient bulk insert
+  await query(
+    `INSERT INTO notification_hidden (notification_id, user_id)
+     SELECT unnest($1::uuid[]), $2
+     ON CONFLICT DO NOTHING`,
+    [notificationIds, userId],
+  );
+}
+
+/**
+ * Mark multiple notifications as read for a user (bulk operation).
+ *
+ * @param {string[]} notificationIds - Array of UUIDs
+ * @param {string} userId - UUID
+ * @returns {Promise<void>}
+ */
+export async function markNotificationsRead(notificationIds, userId) {
+  if (!notificationIds?.length) return;
+  await query(
+    `INSERT INTO notification_reads (notification_id, user_id, read_at)
+     SELECT unnest($1::uuid[]), $2, now()
+     ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = now()`,
+    [notificationIds, userId],
+  );
+}
+
+/**
+ * Get read status for multiple notifications.
+ *
+ * @param {string[]} notificationIds - Array of UUIDs
+ * @param {string} userId - UUID
+ * @returns {Promise<Set<string>>} Set of read notification IDs
+ */
+export async function getReadStatus(notificationIds, userId) {
+  if (!notificationIds?.length) return new Set();
+  const result = await query(
+    `SELECT notification_id FROM notification_reads
+     WHERE user_id = $1 AND notification_id = ANY($2::uuid[])`,
+    [userId, notificationIds],
+  );
+  return new Set(result.rows.map((r) => r.notification_id));
+}
+
+/**
+ * Get hidden status for multiple notifications.
+ *
+ * @param {string[]} notificationIds - Array of UUIDs
+ * @param {string} userId - UUID
+ * @returns {Promise<Set<string>>} Set of hidden notification IDs
+ */
+export async function getHiddenStatus(notificationIds, userId) {
+  if (!notificationIds?.length) return new Set();
+  const result = await query(
+    `SELECT notification_id FROM notification_hidden
+     WHERE user_id = $1 AND notification_id = ANY($2::uuid[])`,
+    [userId, notificationIds],
+  );
+  return new Set(result.rows.map((r) => r.notification_id));
 }
 
 // ── Preferences ───────────────────────────────────────────────────────────────

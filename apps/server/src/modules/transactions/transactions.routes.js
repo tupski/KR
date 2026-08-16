@@ -15,6 +15,7 @@ import {
   updateTransaction,
   deleteTransaction,
   returnDeposit,
+  manualCheckout,
 } from './transactions.controller.js';
 
 const router = Router();
@@ -30,9 +31,10 @@ router.get('/',  listTransactions);
 router.post('/', createTransaction);
 
 // ── Single-resource routes ────────────────────────────────────────────────────
-router.get('/:id',                getTransactionById);
-router.put('/:id',                updateTransaction);
-router.delete('/:id',             deleteTransaction);
+router.get('/:id',                 getTransactionById);
+router.put('/:id',                 updateTransaction);
+router.delete('/:id',              deleteTransaction);
 router.post('/:id/return-deposit', returnDeposit);
+router.post('/:id/checkout',       manualCheckout);
 
 export default router;

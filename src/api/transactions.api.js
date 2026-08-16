@@ -29,4 +29,7 @@ export const transactionsApi = {
 
   /** GET /api/transactions/summary */
   getSummary: (params) => api.get('/api/transactions/summary', params),
+
+  /** POST /api/transactions/:id/checkout - Manual checkout */
+  checkout: (id) => api.post(`/api/transactions/${id}/checkout`),
 };

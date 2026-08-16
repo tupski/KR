@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
 import { 
   Building2, DoorOpen, Plus, Search, Edit2, Trash2, 
   MapPin, Check, X, ChevronRight, LayoutGrid, ArrowLeft,
@@ -29,6 +28,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 
+// API modules
+import { locationsApi } from '../../api/locations.api.js';
+import { api } from '../../api/client.js';
+
 const LocationRoomManager = () => {
   const [currentView, setCurrentView] = useState('apartments'); // 'apartments' | 'rooms'
   const [selectedLocation, setSelectedLocation] = useState(null);
@@ -52,19 +55,33 @@ const LocationRoomManager = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const today = new Date().toISOString().split('T')[0];
 
-      const [locRes, roomRes, transRes] = await Promise.all([
-        supabase.from('lokasi_apartemen').select('*').order('name'),
-        supabase.from('nomor_kamar').select('*').order('name'),
-        supabase.from('transactions')
-          .select('id, nomor_kamar, apartment_location, status, check_in, check_out')
-          .or(`status.eq.Checked-In,status.eq.Booked`)
+      // Fetch locations and rooms with occupancy data
+      const [locRes, roomsRes] = await Promise.all([
+        locationsApi.list(),
+        locationsApi.listRoomsWithOccupancy({})
       ]);
 
-      setLocations(locRes.data || []);
-      setRooms(roomRes.data || []);
-      setActiveTransactions(transRes.data || []);
+      setLocations(locRes?.data || []);
+      
+      // Flatten rooms from all locations
+      const allRooms = roomsRes?.data || [];
+      setRooms(allRooms);
+      
+      // Calculate active transactions from room occupancy data
+      const transactions = [];
+      allRooms.forEach(room => {
+        if (room.current_transaction) {
+          transactions.push({
+            nomor_kamar: room.name,
+            apartment_location: room.location,
+            status: room.current_transaction.status,
+            check_in: room.current_transaction.check_in,
+            check_out: room.current_transaction.check_out
+          });
+        }
+      });
+      setActiveTransactions(transactions);
     } catch (error) {
       toast({ title: "Gagal memuat data", description: error.message, variant: "destructive" });
     } finally {
@@ -78,7 +95,7 @@ const LocationRoomManager = () => {
 
   const apartmentStats = useMemo(() => {
     return locations.map(loc => {
-      const locRooms = rooms.filter(r => r.lokasi === loc.name);
+      const locRooms = rooms.filter(r => r.lokasi === loc.name || r.location === loc.name);
       const total = locRooms.length;
       
       const filledRooms = activeTransactions.filter(t => 
@@ -102,11 +119,13 @@ const LocationRoomManager = () => {
     if (!locForm.name) return;
     try {
       if (locForm.id) {
-        const { error } = await supabase.from('lokasi_apartemen').update({ name: locForm.name }).eq('id', locForm.id);
-        if (error) throw error;
+        // Update location via PUT endpoint (needs to be added to backend)
+        await api.put(`/api/locations/${encodeURIComponent(locForm.name)}`, { 
+          id: locForm.id,
+          name: locForm.name 
+        });
       } else {
-        const { error } = await supabase.from('lokasi_apartemen').insert({ name: locForm.name });
-        if (error) throw error;
+        await locationsApi.create(locForm.name);
       }
       toast({ title: "Apartemen berhasil disimpan ✅" });
       setIsLocDialogOpen(false);
@@ -120,11 +139,17 @@ const LocationRoomManager = () => {
     if (!roomForm.name || !roomForm.lokasi) return;
     try {
       if (roomForm.id) {
-        const { error } = await supabase.from('nomor_kamar').update({ name: roomForm.name, lokasi: roomForm.lokasi }).eq('id', roomForm.id);
-        if (error) throw error;
+        // Update room via PUT endpoint
+        await api.put(`/api/locations/rooms/${roomForm.id}`, {
+          name: roomForm.name,
+          lokasi: roomForm.lokasi
+        });
       } else {
-        const { error } = await supabase.from('nomor_kamar').insert({ name: roomForm.name, lokasi: roomForm.lokasi });
-        if (error) throw error;
+        // Create new room
+        await locationsApi.createRoom({
+          name: roomForm.name,
+          lokasi: roomForm.lokasi
+        });
       }
       toast({ title: "Kamar berhasil disimpan ✅" });
       setIsRoomDialogOpen(false);
@@ -137,9 +162,11 @@ const LocationRoomManager = () => {
   const executeDelete = async () => {
     if (!deleteTarget) return;
     try {
-      const table = deleteTarget.type === 'location' ? 'lokasi_apartemen' : 'nomor_kamar';
-      const { error } = await supabase.from(table).delete().eq('id', deleteTarget.id);
-      if (error) throw error;
+      if (deleteTarget.type === 'location') {
+        await locationsApi.delete(deleteTarget.name);
+      } else {
+        await locationsApi.deleteRoom(deleteTarget.id);
+      }
       toast({ title: "Berhasil dihapus" });
       setIsDeleting(false);
       if (deleteTarget.type === 'location' && selectedLocation?.id === deleteTarget.id) {
@@ -153,7 +180,7 @@ const LocationRoomManager = () => {
 
   const filteredApartments = apartmentStats.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredRooms = rooms.filter(r => 
-    r.lokasi === selectedLocation?.name && 
+    (r.lokasi === selectedLocation?.name || r.location === selectedLocation?.name) && 
     r.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -186,7 +213,7 @@ const LocationRoomManager = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredApartments.map(apt => (
                 <motion.div 
-                  key={apt.id}
+                  key={apt.id || apt.name}
                   whileHover={{ y: -5 }}
                   className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden group hover:shadow-xl transition-all cursor-pointer"
                   onClick={() => { setSelectedLocation(apt); setCurrentView('rooms'); setSearchTerm(''); }}
@@ -231,6 +258,13 @@ const LocationRoomManager = () => {
                 </motion.div>
               ))}
             </div>
+            
+            {filteredApartments.length === 0 && (
+              <div className="text-center py-12 text-slate-400">
+                <Building2 className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>Tidak ada apartemen ditemukan</p>
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div 
@@ -297,73 +331,90 @@ const LocationRoomManager = () => {
               </div>
               
               {filteredRooms.length === 0 && (
-                <div className="py-20 text-center">
-                  <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <DoorOpen className="h-8 w-8 text-slate-300" />
-                  </div>
-                  <p className="text-slate-400 text-sm">Belum ada kamar yang terdaftar.</p>
+                <div className="text-center py-8 text-slate-400">
+                  <DoorOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>Tidak ada kamar ditemukan</p>
                 </div>
               )}
-            </div>
-            
-            <div className="flex justify-center">
-              <Button 
-                variant="ghost" 
-                onClick={() => { setDeleteTarget({ type: 'location', id: selectedLocation.id, name: selectedLocation.name }); setIsDeleting(true); }}
-                className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-xl"
-              >
-                <Trash2 className="h-4 w-4 mr-2" /> Hapus Apartemen Ini
-              </Button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* --- Dialogs & Alerts (Same as before but with Loc/Room distinction) --- */}
+      {/* Location Dialog */}
       <Dialog open={isLocDialogOpen} onOpenChange={setIsLocDialogOpen}>
-        <DialogContent className="bg-white rounded-3xl">
+        <DialogContent className="sm:max-w-[400px] bg-white rounded-3xl">
           <DialogHeader>
-            <DialogTitle>{locForm.id ? 'Edit Apartemen' : 'Tambah Apartemen'}</DialogTitle>
+            <DialogTitle className="text-xl font-bold">
+              {locForm.id ? 'Edit Apartemen' : 'Tambah Apartemen Baru'}
+            </DialogTitle>
+            <DialogDescription>
+              {locForm.id ? 'Perbarui nama apartemen.' : 'Masukkan nama apartemen baru.'}
+            </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-2">
+          <div className="py-4">
             <label className="text-sm font-semibold text-slate-700">Nama Apartemen</label>
             <Input 
-              placeholder="Misal: Sky House BSD" 
               value={locForm.name} 
-              onChange={(e) => setLocForm({...locForm, name: e.target.value})}
-              className="rounded-xl"
+              onChange={(e) => setLocForm({ ...locForm, name: e.target.value })}
+              placeholder="Contoh: Tower A"
+              className="mt-2 rounded-xl"
             />
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsLocDialogOpen(false)}>Batal</Button>
-            <Button onClick={handleSaveLocation} className="bg-blue-600 text-white rounded-xl px-6">Simpan</Button>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setIsLocDialogOpen(false)} className="rounded-xl">Batal</Button>
+            <Button onClick={handleSaveLocation} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl">
+              Simpan
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Room Dialog */}
       <Dialog open={isRoomDialogOpen} onOpenChange={setIsRoomDialogOpen}>
-        <DialogContent className="bg-white rounded-3xl">
+        <DialogContent className="sm:max-w-[400px] bg-white rounded-3xl">
           <DialogHeader>
-            <DialogTitle>{roomForm.id ? 'Edit Kamar' : 'Tambah Kamar'}</DialogTitle>
+            <DialogTitle className="text-xl font-bold">
+              {roomForm.id ? 'Edit Kamar' : 'Tambah Kamar Baru'}
+            </DialogTitle>
+            <DialogDescription>
+              {roomForm.id ? 'Perbarui nomor kamar.' : 'Masukkan nomor kamar baru.'}
+            </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-4">
+          <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-slate-700">Nomor Kamar</label>
               <Input 
-                placeholder="Misal: L3 8M" 
                 value={roomForm.name} 
-                onChange={(e) => setRoomForm({...roomForm, name: e.target.value})}
+                onChange={(e) => setRoomForm({ ...roomForm, name: e.target.value })}
+                placeholder="Contoh: 101"
                 className="rounded-xl"
               />
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700">Lokasi</label>
+              <Select value={roomForm.lokasi} onValueChange={(v) => setRoomForm({ ...roomForm, lokasi: v })}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Pilih lokasi" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locations.map(loc => (
+                    <SelectItem key={loc.id || loc.name} value={loc.name}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsRoomDialogOpen(false)}>Batal</Button>
-            <Button onClick={handleSaveRoom} className="bg-blue-600 text-white rounded-xl px-6">Simpan</Button>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setIsRoomDialogOpen(false)} className="rounded-xl">Batal</Button>
+            <Button onClick={handleSaveRoom} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl">
+              Simpan
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Delete Confirmation */}
       <AlertDialog open={isDeleting} onOpenChange={setIsDeleting}>
         <AlertDialogContent className="bg-white rounded-[2rem]">
           <AlertDialogHeader>

@@ -185,3 +185,21 @@ export async function returnDeposit(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * POST /api/transactions/:id/checkout
+ * Manual checkout - sets checkout_at to current time.
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function manualCheckout(req, res, next) {
+  try {
+    const transaction = await txService.manualCheckout(
+      req.params.id,
+      req.user.id,
+    );
+    res.status(200).json({ transaction });
+  } catch (err) {
+    next(err);
+  }
+}

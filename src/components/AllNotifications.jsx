@@ -1,23 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bell, CheckCheck, Filter, Trash2, CheckSquare, Square, Settings2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
 import NotificationPreferences from '@/components/NotificationPreferences';
+import { notificationsApi } from '@/api/notifications.api';
 
 const PAGE_SIZE = 30;
-
-function buildAudienceFilter(userId, userRole) {
-  if (!userId) return null;
-  if (userRole === 'super_admin') return `audience_user_id.eq.${userId},audience_role.eq.super_admin,audience_role.eq.all`;
-  if (userRole === 'admin') return `audience_user_id.eq.${userId},audience_role.eq.admin,audience_role.eq.all`;
-  return `audience_user_id.eq.${userId},audience_role.eq.all`;
-}
 
 function typeToCategory(type) {
   switch (type) {
@@ -42,95 +35,45 @@ export default function AllNotifications({ open, onOpenChange }) {
 
   const [items, setItems] = useState([]);
   const [unreadSet, setUnreadSet] = useState(new Set());
-  const [hiddenSet, setHiddenSet] = useState(new Set());
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-
+  const [total, setTotal] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
   const [showPrefs, setShowPrefs] = useState(false);
 
-  const audienceFilter = useMemo(() => buildAudienceFilter(userId, userRole), [userId, userRole]);
-
-  /**
-   * Helper: chunk array dan fetch reads/hidden secara bertahap.
-   * Menggunakan Promise.allSettled agar partial failure tidak menghancurkan semua data.
-   */
-  const fetchReadsAndHiddenChunked = async (uids, nIds, chunkSize = 20) => {
-    const readSet = new Set();
-    const hiddenSet = new Set();
-    const uniqueIds = [...new Set(nIds)];
-
-    const chunkArr = (arr, sz) => {
-      const chunks = [];
-      for (let i = 0; i < arr.length; i += sz) chunks.push(arr.slice(i, i + sz));
-      return chunks;
-    };
-
-    const readChunks = chunkArr(uniqueIds, chunkSize);
-    const hiddenChunks = chunkArr(uniqueIds, chunkSize);
-
-    const readResults = await Promise.allSettled(
-      readChunks.map((chunk) =>
-        supabase.from('notification_reads').select('notification_id').eq('user_id', uids)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-    for (const r of readResults) {
-      if (r.status === 'fulfilled' && r.value?.data) {
-        for (const row of r.value.data) readSet.add(row.notification_id);
-      } else if (r.status === 'rejected') {
-        console.warn('[AllNotifications] notification_reads chunk failed:', r.reason?.message);
-      }
-    }
-
-    const hiddenResults = await Promise.allSettled(
-      hiddenChunks.map((chunk) =>
-        supabase.from('notification_hidden').select('notification_id').eq('user_id', uids)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-    for (const r of hiddenResults) {
-      if (r.status === 'fulfilled' && r.value?.data) {
-        for (const row of r.value.data) hiddenSet.add(row.notification_id);
-      } else if (r.status === 'rejected') {
-        console.warn('[AllNotifications] notification_hidden chunk failed:', r.reason?.message);
-      }
-    }
-
-    return { readSet, hiddenSet };
-  };
-
-  const load = async () => {
-    if (!userId || !audienceFilter) return;
+  const load = useCallback(async () => {
+    if (!userId) return;
     setLoading(true);
     try {
-      const from = (page - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
-      const { data: notif, error: notifErr } = await supabase
-        .from('notifications')
-        .select('id,type,title,body,data,created_at,audience_role,audience_user_id')
-        .or(audienceFilter)
-        .order('created_at', { ascending: false })
-        .range(from, to);
-      if (notifErr) throw notifErr;
-
-      const ids = (notif || []).map((n) => n.id);
-
-      const { readSet: readIds, hiddenSet: hiddenIds } = await fetchReadsAndHiddenChunked(userId, ids, 20);
-
-      const filtered = (notif || []).filter((n) => !hiddenIds.has(n.id));
-      const unread = new Set(filtered.map((n) => n.id).filter((id) => !readIds.has(id)));
-
-      setItems(filtered);
+      // Use REST API to list notifications
+      const result = await notificationsApi.list({ page, limit: PAGE_SIZE });
+      
+      const notifications = result.data || [];
+      const totalCount = result.total || 0;
+      
+      // Get read status for the notifications
+      const ids = notifications.map((n) => n.id);
+      let readIds = [];
+      if (ids.length > 0) {
+        try {
+          const readStatus = await notificationsApi.getReadStatus(ids);
+          readIds = readStatus.read_ids || [];
+        } catch (err) {
+          console.warn('[AllNotifications] Failed to fetch read status:', err.message);
+        }
+      }
+      
+      const readSet = new Set(readIds);
+      const unread = new Set(ids.filter((id) => !readSet.has(id)));
+      
+      setItems(notifications);
       setUnreadSet(unread);
-      setHiddenSet(hiddenIds);
+      setTotal(totalCount);
     } catch (error) {
       console.warn('[AllNotifications] load failed:', error?.message || error);
-      // Jangan tampilkan toast destructive untuk error non-fatal notifikasi
       if (error?.message && !error.message.includes('notification')) {
         toast({
           title: 'Gagal memuat notifikasi',
@@ -141,7 +84,7 @@ export default function AllNotifications({ open, onOpenChange }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId, page]);
 
   useEffect(() => {
     if (open) {
@@ -152,24 +95,10 @@ export default function AllNotifications({ open, onOpenChange }) {
     }
   }, [open]);
 
-  const allNotifDebounceRef = useRef(null);
-  const debouncedLoad = useCallback(() => {
-    if (allNotifDebounceRef.current) clearTimeout(allNotifDebounceRef.current);
-    allNotifDebounceRef.current = setTimeout(() => load(), 1500);
-  }, [load]);
-
   useEffect(() => {
     if (!open) return;
     load();
-    const channel = supabase
-      .channel(`all_notif_${userId || 'anon'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, debouncedLoad)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, debouncedLoad)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_hidden' }, debouncedLoad)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, page, userId, audienceFilter, onlyUnread]);
+  }, [open, page, userId]);
 
   const displayed = useMemo(() => {
     if (!onlyUnread) return items;
@@ -189,31 +118,31 @@ export default function AllNotifications({ open, onOpenChange }) {
     if (!userId) return;
     const uniqueIds = [...new Set(ids)].filter(Boolean);
     if (!uniqueIds.length) return;
-    const payload = uniqueIds.map((id) => ({ notification_id: id, user_id: userId, read_at: new Date().toISOString() }));
-    const { error } = await supabase.from('notification_reads').upsert(payload, { onConflict: 'notification_id,user_id' });
-    if (error) {
+    
+    try {
+      await notificationsApi.markRead(uniqueIds);
+      setUnreadSet((prev) => {
+        const next = new Set(prev);
+        uniqueIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } catch (error) {
       toast({ title: 'Gagal menandai notifikasi', description: error.message, variant: 'destructive' });
-      return;
     }
-    setUnreadSet((prev) => {
-      const next = new Set(prev);
-      uniqueIds.forEach((id) => next.delete(id));
-      return next;
-    });
   };
 
   const hideIds = async (ids) => {
     if (!userId) return;
     const uniqueIds = [...new Set(ids)].filter(Boolean);
     if (!uniqueIds.length) return;
-    const payload = uniqueIds.map((id) => ({ notification_id: id, user_id: userId, hidden_at: new Date().toISOString() }));
-    const { error } = await supabase.from('notification_hidden').upsert(payload, { onConflict: 'notification_id,user_id' });
-    if (error) {
+    
+    try {
+      await notificationsApi.hideMany(uniqueIds);
+      setItems((prev) => prev.filter((n) => !uniqueIds.includes(n.id)));
+      setSelectedIds(new Set());
+    } catch (error) {
       toast({ title: 'Gagal menghapus notifikasi', description: error.message, variant: 'destructive' });
-      return;
     }
-    setItems((prev) => prev.filter((n) => !uniqueIds.includes(n.id)));
-    setSelectedIds(new Set());
   };
 
   const handleMarkAllRead = async () => {
@@ -225,6 +154,9 @@ export default function AllNotifications({ open, onOpenChange }) {
   };
 
   const selectionIds = [...selectedIds];
+
+  // Calculate if there are more pages
+  const hasMore = items.length === PAGE_SIZE && (page * PAGE_SIZE) < total;
 
   return (
     <>
@@ -340,7 +272,7 @@ export default function AllNotifications({ open, onOpenChange }) {
               Sebelumnya
             </Button>
             <p className="text-xs text-slate-500">Halaman {page}</p>
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={items.length < PAGE_SIZE}>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={!hasMore}>
               Berikutnya
             </Button>
           </div>
@@ -351,4 +283,3 @@ export default function AllNotifications({ open, onOpenChange }) {
     </>
   );
 }
-

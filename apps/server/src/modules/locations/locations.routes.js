@@ -12,8 +12,13 @@ const router = Router();
 
 const superAdminOnly = requireRole('super_admin');
 
-router.get('/',          requireAuth,    ctrl.listLocations);
-router.post('/',         superAdminOnly, ctrl.createLocation);
-router.delete('/:name',  superAdminOnly, ctrl.deleteLocation);
+router.get('/',              requireAuth, ctrl.listLocations);
+router.get('/stats',         requireAuth, ctrl.getLocationStats);
+router.get('/rooms',         requireAuth, ctrl.listRoomsWithOccupancy);
+router.get('/rooms/report',  requireAuth, ctrl.listRoomsForReport);
+router.post('/',             superAdminOnly, ctrl.createLocation);
+router.post('/rooms',        superAdminOnly, ctrl.createRoom);
+router.delete('/:name',      superAdminOnly, ctrl.deleteLocation);
+router.delete('/rooms/:id',  superAdminOnly, ctrl.deleteRoom);
 
 export default router;

@@ -334,3 +334,26 @@ export async function markDepositReturned(id, { refundProofUrl = null } = {}, us
 
   return result.rows[0];
 }
+
+/**
+ * Manual checkout - sets checkout_at to current time.
+ *
+ * @param {string} id - Transaction UUID
+ * @param {string} userId - UUID of the user performing checkout
+ * @returns {Promise<object>} Updated transaction row
+ */
+export async function manualCheckout(id, userId) {
+  // Verify transaction exists first
+  const tx = await getTransactionById(id);
+
+  // Update checkout_at
+  const result = await query(
+    `UPDATE transactions
+     SET checkout_at = now(), updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id],
+  );
+
+  return result.rows[0];
+}

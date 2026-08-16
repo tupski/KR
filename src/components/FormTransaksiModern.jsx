@@ -5,13 +5,15 @@ import { AlertTriangle, Building2, Clock3, DoorOpen, Eye, Landmark, MapPin, Save
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { supabase, supabaseProjectRef } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { compressImageFile } from '@/lib/compressImage';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { calcEndAt, getActiveTransaction, getRentalConfig, capitalizeWords } from '@/lib/roomUtils';
 import DayInfoBanner from '@/components/DayInfoBanner';
+import { locationsApi } from '@/api/locations.api.js';
+import { transactionsApi } from '@/api/transactions.api.js';
+import { usersApi } from '@/api/users.api.js';
+import { uploadFile as apiUploadFile } from '@/api/storage.api.js';
 
 const RENTAL_TYPE_OPTIONS = [
   { value: 'TRANSIT', label: 'Transit' },
@@ -187,23 +189,26 @@ const FormTransaksiModern = ({
     const fetchRefs = async () => {
       setRefsLoading(true);
       try {
-        const [{ data: lokasi }, { data: kamar }, { data: marketing }, { data: karyawan }, { data: roomTransactions }, { data: assignments }] = await Promise.all([
-          supabase.from('lokasi_apartemen').select('name').order('name'),
-          supabase.from('nomor_kamar').select('name, lokasi').order('name'),
-          supabase.from('marketing_list').select('name').order('name'),
-          supabase.from('karyawan_list').select('name').order('name'),
-          (() => {
-            const since = new Date();
-            since.setDate(since.getDate() - 90);
-            return supabase
-              .from('transactions')
-              .select('apartment_location, room_number, checkin_at, rental_duration, checkout_at')
-              .gte('checkin_at', since.toISOString())
-              .order('checkin_at', { ascending: false })
-              .limit(500);
-          })(),
-          supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id)
+        // Fetch all reference data via REST APIs
+        const since = new Date();
+        since.setDate(since.getDate() - 90);
+        
+        const [lokasiData, kamarData, marketingData, karyawanData, roomTransactionsData, assignmentsData] = await Promise.all([
+          locationsApi.list(),
+          locationsApi.listRoomsWithOccupancy(),
+          usersApi.list({ role: 'marketing' }),
+          usersApi.list({ role: 'karyawan' }),
+          transactionsApi.list({ startDate: since.toISOString(), limit: 500 }),
+          user?.id ? usersApi.getLocations(user.id) : Promise.resolve([]),
         ]);
+
+        // Transform data to match expected format
+        const lokasi = (lokasiData || []).map(item => ({ name: item.name || item }));
+        const kamar = (kamarData || []).map(item => ({ name: item.room_number, lokasi: item.location }));
+        const marketing = (marketingData || []).map(item => ({ name: item.name }));
+        const karyawan = (karyawanData || []).map(item => ({ name: item.name }));
+        const roomTransactions = roomTransactionsData || [];
+        const assignments = (assignmentsData || []).map(item => ({ location_name: item.location_name || item }));
 
         let filteredLokasi = lokasi || [];
         let filteredKamar = kamar || [];
@@ -287,8 +292,8 @@ const FormTransaksiModern = ({
       if (field === 'namaMarketing') {
         const exists = refs.marketing.some((item) => item.name.toLowerCase() === trimmed.toLowerCase());
         if (!exists) {
-          const { error } = await supabase.from('marketing_list').insert({ name: trimmed });
-          if (error) throw error;
+          // Create marketing user via API
+          await usersApi.create({ name: trimmed, role: 'marketing' });
           setRefs((prev) => ({ ...prev, marketing: [...prev.marketing, { name: trimmed }] }));
           toast({ title: 'Marketing baru ditambahkan', description: trimmed });
         }
@@ -308,14 +313,15 @@ const FormTransaksiModern = ({
       handleChange('namaMarketing', trimmed);
       return;
     }
-    const { error } = await supabase.from('marketing_list').insert({ name: trimmed });
-    if (error) {
+    try {
+      // Create marketing user via API
+      await usersApi.create({ name: trimmed, role: 'marketing' });
+      setRefs((prev) => ({ ...prev, marketing: [...prev.marketing, { name: trimmed }] }));
+      handleChange('namaMarketing', trimmed);
+      toast({ title: 'Marketing baru ditambahkan', description: trimmed });
+    } catch (error) {
       toast({ title: 'Gagal menambah marketing', description: error.message, variant: 'destructive' });
-      return;
     }
-    setRefs((prev) => ({ ...prev, marketing: [...prev.marketing, { name: trimmed }] }));
-    handleChange('namaMarketing', trimmed);
-    toast({ title: 'Marketing baru ditambahkan', description: trimmed });
   };
 
   const [ktpPreviewUrl, setKtpPreviewUrl] = useState(null);
@@ -422,9 +428,8 @@ const FormTransaksiModern = ({
     // 1. Double-submit protection
     if (isSubmitting) return;
 
-    // 2. Real-time session validation
-    const { data: { session: currentSession } } = await supabase.auth.getSession();
-    if (!currentSession?.user?.id) {
+    // 2. Session validation via user context
+    if (!user?.id) {
       toast({
         title: 'Sesi berakhir',
         description: 'Silakan login kembali untuk menyimpan transaksi.',
@@ -442,10 +447,12 @@ const FormTransaksiModern = ({
     const rentalConfig = getRentalConfig(formData.jenisSewa, formData.lamaSewa, formData.customSewaJam, checkInDate);
 
     try {
+      // Upload files via storage API
       const [ktpUrl, transferProofUrl] = await Promise.all([
-        uploadFile(ktpFile, 'ktp_images'),
-        uploadFile(buktiTransferFile, 'transfer_proofs'),
+        ktpFile ? apiUploadFile(ktpFile, 'ktp_images') : Promise.resolve(null),
+        buktiTransferFile ? apiUploadFile(buktiTransferFile, 'transfer_proofs') : Promise.resolve(null),
       ]);
+      
       const payload = {
         user_id: user.id,
         customer_name: capitalizeWords(formData.namaCustomer),
@@ -466,36 +473,12 @@ const FormTransaksiModern = ({
         ktp_image_url: ktpUrl,
         transfer_proof_url: transferProofUrl,
       };
-      const { data: insertedTx, error: insertError } = await supabase
-        .from('transactions')
-        .insert(payload)
-        .select('id, created_at')
-        .single();
-      if (insertError) throw insertError;
+      
+      // Create transaction via REST API
+      const insertedTx = await transactionsApi.create(payload);
 
-      const { data: verifiedTx, error: verifyError } = await supabase
-        .from('transactions')
-        .select('id')
-        .eq('id', insertedTx.id)
-        .maybeSingle();
-      if (verifyError) {
-        console.warn('[Transaksi] verifikasi insert gagal:', verifyError);
-      }
-
-      // Log activity
-      const { error: logError } = await supabase.rpc('log_activity', {
-        p_action: 'Input Transaksi',
-        p_details: `Customer: ${payload.customer_name}, Lokasi: ${payload.apartment_location} - ${payload.room_number}`,
-        p_metadata: { transaction_id: insertedTx?.id ?? null }
-      });
-      if (logError) {
-        toast({
-          title: 'Transaksi tersimpan, log aktivitas gagal',
-          description: logError.message,
-          variant: 'destructive',
-        });
-      }
-
+      // Activity logging is handled server-side, no need for separate RPC call
+      
       setShowConfirmModal(false);
       toast({
         title: verifiedTx?.id ? 'Transaksi berhasil disimpan' : 'Transaksi tersimpan, verifikasi ulang dibutuhkan',
@@ -552,14 +535,19 @@ const FormTransaksiModern = ({
             <button type="button" className="text-sm text-slate-600 hover:text-slate-900" onClick={() => handleChange('namaMarketing', '')}>Kosongkan pilihan</button>
             <button type="button" className="text-sm text-red-600 hover:text-red-800" onClick={async () => {
               if (!window.confirm(`Hapus nama marketing ${formData.namaMarketing}?`)) return;
-              const { error } = await supabase.from('marketing_list').delete().eq('name', formData.namaMarketing);
-              if (error) {
+              try {
+                // Find marketing user and delete via API
+                const marketingUsers = await usersApi.list({ role: 'marketing', search: formData.namaMarketing });
+                const marketingToDelete = marketingUsers?.find(u => u.name === formData.namaMarketing);
+                if (marketingToDelete) {
+                  await usersApi.delete(marketingToDelete.id);
+                }
+                setRefs((prev) => ({ ...prev, marketing: prev.marketing.filter((item) => item.name !== formData.namaMarketing) }));
+                handleChange('namaMarketing', '');
+                toast({ title: 'Nama marketing dihapus' });
+              } catch (error) {
                 toast({ title: 'Gagal menghapus marketing', description: error.message, variant: 'destructive' });
-                return;
               }
-              setRefs((prev) => ({ ...prev, marketing: prev.marketing.filter((item) => item.name !== formData.namaMarketing) }));
-              handleChange('namaMarketing', '');
-              toast({ title: 'Nama marketing dihapus' });
             }}>Hapus dari daftar</button>
           </div>
         )}
@@ -719,14 +707,19 @@ const FormTransaksiModern = ({
                       </button>
                       <button type="button" className="text-sm text-red-600 hover:text-red-800" onClick={async () => {
                         if (!window.confirm(`Hapus nama input oleh ${formData.input_by}?`)) return;
-                        const { error } = await supabase.from('karyawan_list').delete().eq('name', formData.input_by);
-                        if (error) {
+                        try {
+                          // Find karyawan user and delete via API
+                          const karyawanUsers = await usersApi.list({ role: 'karyawan', search: formData.input_by });
+                          const karyawanToDelete = karyawanUsers?.find(u => u.name === formData.input_by);
+                          if (karyawanToDelete) {
+                            await usersApi.delete(karyawanToDelete.id);
+                          }
+                          setRefs((prev) => ({ ...prev, karyawan: prev.karyawan.filter((item) => item.name !== formData.input_by) }));
+                          handleChange('input_by', '');
+                          toast({ title: 'Input oleh dihapus dari daftar' });
+                        } catch (error) {
                           toast({ title: 'Gagal menghapus input oleh', description: error.message, variant: 'destructive' });
-                          return;
                         }
-                        setRefs((prev) => ({ ...prev, karyawan: prev.karyawan.filter((item) => item.name !== formData.input_by) }));
-                        handleChange('input_by', '');
-                        toast({ title: 'Input oleh dihapus dari daftar' });
                       }}>
                         Hapus dari daftar
                       </button>

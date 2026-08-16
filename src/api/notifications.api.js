@@ -9,8 +9,23 @@ export const notificationsApi = {
   /** GET /api/notifications */
   list: (params) => api.get('/api/notifications', params),
 
-  /** POST /api/notifications/:id/hide */
+  /** GET /api/notifications/unread-count */
+  getUnreadCount: () => api.get('/api/notifications/unread-count'),
+
+  /** POST /api/notifications/:id/hide - hide single notification */
   hide: (id) => api.post(`/api/notifications/${id}/hide`),
+
+  /** POST /api/notifications/hide - bulk hide notifications */
+  hideMany: (notificationIds) => api.post('/api/notifications/hide', { notification_ids: notificationIds }),
+
+  /** POST /api/notifications/mark-read - mark notifications as read */
+  markRead: (notificationIds) => api.post('/api/notifications/mark-read', { notification_ids: notificationIds }),
+
+  /** POST /api/notifications/read-status - get read status for notifications */
+  getReadStatus: (notificationIds) => api.post('/api/notifications/read-status', { notification_ids: notificationIds }),
+
+  /** POST /api/notifications/hidden-status - get hidden status for notifications */
+  getHiddenStatus: (notificationIds) => api.post('/api/notifications/hidden-status', { notification_ids: notificationIds }),
 
   /** GET /api/notifications/preferences */
   getPreferences: () => api.get('/api/notifications/preferences'),

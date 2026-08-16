@@ -13,7 +13,14 @@ import { ValidationError } from '../../middleware/errorHandler.js';
 const updateProfileSchema = z.object({
   full_name: z.string().min(1).max(100).optional(),
   phone:     z.string().max(30).optional().nullable(),
-  gender:    z.enum(['male', 'female', 'other']).optional().nullable(),
+  gender:    z.enum(['male', 'female', 'other', 'Pria', 'Wanita']).optional().nullable(),
+});
+
+const updateUserSchema = z.object({
+  full_name: z.string().min(1).max(100).optional(),
+  phone:     z.string().max(30).optional().nullable(),
+  gender:    z.enum(['male', 'female', 'other', 'Pria', 'Wanita']).optional().nullable(),
+  role:      z.enum(['super_admin', 'admin', 'karyawan']).optional(),
 });
 
 const createUserSchema = z.object({
@@ -21,7 +28,7 @@ const createUserSchema = z.object({
   password:  z.string().min(8, 'Password must be at least 8 characters'),
   full_name: z.string().min(1).max(100),
   phone:     z.string().max(30).optional().nullable(),
-  gender:    z.enum(['male', 'female', 'other']).optional().nullable(),
+  gender:    z.enum(['male', 'female', 'other', 'Pria', 'Wanita']).optional().nullable(),
   role:      z.enum(['super_admin', 'admin', 'karyawan']).default('karyawan'),
 });
 
@@ -31,6 +38,11 @@ const resetPasswordSchema = z.object({
 
 const locationAssignmentsSchema = z.object({
   locations: z.array(z.string().min(1)).min(0),
+});
+
+const toggleLocationSchema = z.object({
+  locationName: z.string().min(1),
+  assigned: z.boolean(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -184,6 +196,22 @@ export async function createUser(req, res, next) {
 }
 
 /**
+ * PUT /api/users/:id
+ * Update a user (admin/super_admin only).
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function updateUser(req, res, next) {
+  try {
+    const data = validate(updateUserSchema, req.body);
+    const user = await usersService.updateUser(req.params.id, data);
+    res.status(200).json({ data: user });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * DELETE /api/users/:id
  * Delete a user (super_admin only).
  *
@@ -210,6 +238,37 @@ export async function resetUserPassword(req, res, next) {
     const newPasswordHash = await usersService.hashPassword(newPassword);
     await usersService.resetUserPassword(req.params.id, newPasswordHash);
     res.status(200).json({ message: 'Password reset successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/users/:id/signout-all
+ * Sign out all devices for a user (super_admin only).
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function signOutAllDevices(req, res, next) {
+  try {
+    await usersService.signOutAllDevices(req.params.id);
+    res.status(200).json({ message: 'All devices signed out successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/users/:id/locations/toggle
+ * Toggle a location assignment for a user (super_admin only).
+ *
+ * @type {import('express').RequestHandler}
+ */
+export async function toggleUserLocation(req, res, next) {
+  try {
+    const { locationName, assigned } = validate(toggleLocationSchema, req.body);
+    await usersService.toggleUserLocation(req.params.id, locationName, assigned);
+    res.status(200).json({ message: 'Location assignment toggled successfully' });
   } catch (err) {
     next(err);
   }

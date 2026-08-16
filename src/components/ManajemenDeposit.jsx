@@ -4,8 +4,10 @@ import { CheckCircle, Clock, Upload, Search, X, Banknote, Landmark, Wallet } fro
 import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from '@/components/ui/dialog';
-import { supabase } from '@/lib/customSupabaseClient';
-import { resolveStorageUrl } from '@/lib/storageUrl';
+import { financeApi } from '@/api/finance.api.js';
+import { transactionsApi } from '@/api/transactions.api.js';
+import { locationsApi } from '@/api/locations.api.js';
+import { uploadFile as apiUploadFile, resolveFileUrl } from '@/api/storage.api.js';
 import Select from 'react-select';
 import { Image as ImageIcon } from 'lucide-react';
 
@@ -102,16 +104,11 @@ const ManajemenDeposit = () => {
 
   const loadDeposits = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('id, customer_name, room_number, apartment_location, deposit_cash, deposit_transfer, created_at, deposit_returned_at, deposit_refund_proof_url, marketing_name, input_by')
-      .or('deposit_cash.gt.0,deposit_transfer.gt.0')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      toast({ title: 'Gagal memuat deposit', description: error.message, variant: 'destructive' });
-    } else {
+    try {
+      const data = await financeApi.listDeposits();
       setDeposits(data || []);
+    } catch (error) {
+      toast({ title: 'Gagal memuat deposit', description: error.message, variant: 'destructive' });
     }
     setLoading(false);
   }, []);
@@ -128,12 +125,20 @@ const ManajemenDeposit = () => {
       return;
     }
     const loaded = async () => {
-      let query = supabase.from('nomor_kamar').select('name, lokasi');
-      if (selectedLocations.length > 0) {
-        query = query.in('lokasi', selectedLocations);
+      try {
+        // Fetch rooms via locations API
+        const data = await locationsApi.listRoomsWithOccupancy();
+        // Filter by selected locations if any
+        const filtered = selectedLocations.length > 0
+          ? (data || []).filter(r => selectedLocations.includes(r.location))
+          : (data || []);
+        // Transform to expected format { name, lokasi }
+        const roomsData = filtered.map(r => ({ name: r.room_number, lokasi: r.location }));
+        setRooms(roomsData);
+      } catch (err) {
+        console.error('Error loading rooms:', err);
+        setRooms([]);
       }
-      const { data } = await query.order('name');
-      setRooms(data || []);
     };
     loaded();
   }, [selectedLocations]);
@@ -309,23 +314,15 @@ const ManajemenDeposit = () => {
 
     try {
       if (fileBukti) {
-        const fileExt = fileBukti.name.split('.').pop();
-        const fileName = `refund-${selectedTx.id}-${Date.now()}.${fileExt}`;
-        const filePath = `refund_proofs/${fileName}`;
-        const { error: uploadError } = await supabase.storage.from('transaction_receipts').upload(filePath, fileBukti);
-        if (uploadError) throw uploadError;
-        proofUrl = filePath;
+        // Upload via storage API
+        proofUrl = await apiUploadFile(fileBukti, 'refund_proofs');
       }
 
-      const { error } = await supabase
-        .from('transactions')
-        .update({
-          deposit_returned_at: new Date().toISOString(),
-          deposit_refund_proof_url: proofUrl,
-        })
-        .eq('id', selectedTx.id);
-
-      if (error) throw error;
+      // Return deposit via transactions API
+      await transactionsApi.returnDeposit(selectedTx.id, {
+        deposit_returned_at: new Date().toISOString(),
+        deposit_refund_proof_url: proofUrl,
+      });
 
       toast({ title: 'Deposit berhasil dikembalikan ✅' });
       setSelectedTx(null);
@@ -633,7 +630,7 @@ const ManajemenDeposit = () => {
                             <DialogDescription className="text-slate-300">Bukti refund deposit customer {tx.customer_name}.</DialogDescription>
                           </DialogHeader>
                           <img
-                            src={resolveStorageUrl(tx.deposit_refund_proof_url)}
+                            src={resolveFileUrl(tx.deposit_refund_proof_url)}
                             alt="Bukti Refund"
                             className="w-full rounded-2xl border border-white/20"
                           />

@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 import { motion } from "framer-motion";
 import { Download, LogIn, Shield, User } from 'lucide-react';
 
 const Auth = () => {
+    const { signIn } = useAuth();
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -72,11 +73,11 @@ const Auth = () => {
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-            toast({ variant: "destructive", title: "Login Gagal!", description: error.message });
-        } else {
+        try {
+            await signIn(email, password);
             toast({ title: "Login Berhasil!" });
+        } catch (error) {
+            toast({ variant: "destructive", title: "Login Gagal!", description: error.message });
         }
         setLoading(false);
     };

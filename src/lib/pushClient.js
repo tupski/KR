@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/customSupabaseClient';
+import { notificationsApi } from '@/api/notifications.api';
 
 export function isPushSupported() {
   return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
@@ -19,7 +19,7 @@ export async function registerPushSubscription({ vapidPublicKey }) {
   });
 }
 
-export async function saveSubscriptionToSupabase(subscription, userId) {
+export async function saveSubscriptionToServer(subscription, userId) {
   if (!subscription || !userId) return;
   const json = subscription.toJSON();
   const payload = {
@@ -28,9 +28,11 @@ export async function saveSubscriptionToSupabase(subscription, userId) {
     p256dh: json?.keys?.p256dh || '',
     auth: json?.keys?.auth || '',
   };
-  const { error } = await supabase.from('push_subscriptions').upsert(payload, { onConflict: 'user_id,endpoint' });
-  if (error) throw error;
+  await notificationsApi.subscribe(payload);
 }
+
+// Backward compatibility alias
+export const saveSubscriptionToSupabase = saveSubscriptionToServer;
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

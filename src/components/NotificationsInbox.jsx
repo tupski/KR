@@ -3,7 +3,7 @@ import { Check, CheckCheck, Bell, Filter, ExternalLink, ChevronDown, ChevronUp }
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+import { notificationsApi } from '@/api/notifications.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
 import PaginationControls from '@/components/PaginationControls';
@@ -66,86 +66,38 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
   const [loading, setLoading] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
 
-  const audienceFilter = useMemo(() => buildAudienceFilter(userId, userRole), [userId, userRole]);
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-  /**
-   * Helper: chunk array dan fetch reads/hidden secara bertahap.
-   * Menggunakan Promise.allSettled agar partial failure tidak menghancurkan semua data.
-   */
-  const fetchReadsAndHiddenChunked = async (uids, nIds, chunkSize = 20) => {
-    const readSet = new Set();
-    const hiddenSet = new Set();
-    const uniqueIds = [...new Set(nIds)];
-
-    const chunkArr = (arr, sz) => {
-      const chunks = [];
-      for (let i = 0; i < arr.length; i += sz) chunks.push(arr.slice(i, i + sz));
-      return chunks;
-    };
-
-    const readChunks = chunkArr(uniqueIds, chunkSize);
-    const hiddenChunks = chunkArr(uniqueIds, chunkSize);
-
-    const readResults = await Promise.allSettled(
-      readChunks.map((chunk) =>
-        supabase.from('notification_reads').select('notification_id').eq('user_id', uids)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-    for (const r of readResults) {
-      if (r.status === 'fulfilled' && r.value?.data) {
-        for (const row of r.value.data) readSet.add(row.notification_id);
-      } else if (r.status === 'rejected') {
-        console.warn('[NotificationsInbox] notification_reads chunk failed:', r.reason?.message);
-      }
-    }
-
-    const hiddenResults = await Promise.allSettled(
-      hiddenChunks.map((chunk) =>
-        supabase.from('notification_hidden').select('notification_id').eq('user_id', uids)
-          .in('notification_id', chunk.length ? chunk : ['00000000-0000-0000-0000-000000000000'])
-      )
-    );
-    for (const r of hiddenResults) {
-      if (r.status === 'fulfilled' && r.value?.data) {
-        for (const row of r.value.data) hiddenSet.add(row.notification_id);
-      } else if (r.status === 'rejected') {
-        console.warn('[NotificationsInbox] notification_hidden chunk failed:', r.reason?.message);
-      }
-    }
-
-    return { readSet, hiddenSet };
-  };
-
   const load = async () => {
-    if (!userId || !audienceFilter) return;
+    if (!userId) return;
     setLoading(true);
     try {
       const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
+      const params = {
+        page,
+        limit: pageSize,
+        unread_only: onlyUnread || undefined,
+      };
 
-      const { data: notif, error: notifErr, count } = await supabase
-        .from('notifications')
-        .select('id,type,title,body,data,created_at,audience_role,audience_user_id', { count: 'exact' })
-        .or(audienceFilter)
-        .order('created_at', { ascending: false })
-        .range(from, to);
-      if (notifErr) throw notifErr;
-
-      setTotalItems(count || 0);
-
-      const ids = (notif || []).map((n) => n.id);
-      const { readSet: readIds, hiddenSet: hiddenIds } = await fetchReadsAndHiddenChunked(userId, ids, 20);
-
-      const filtered = (notif || []).filter((n) => !hiddenIds.has(n.id));
+      const response = await notificationsApi.list(params);
+      
+      // API returns { notifications, total, readStatus, hiddenStatus }
+      const notif = response.notifications || response.data || response;
+      const count = response.total || response.count || notif.length;
+      
+      setTotalItems(count);
+      setItems(notif);
+      
+      // Calculate unread set from readStatus
+      const readIds = new Set(response.readStatus || []);
+      const hiddenIds = new Set(response.hiddenStatus || []);
+      
+      const filtered = notif.filter((n) => !hiddenIds.has(n.id));
       const unread = new Set(filtered.map((n) => n.id).filter((id) => !readIds.has(id)));
-
-      setItems(filtered);
+      
       setUnreadSet(unread);
     } catch (error) {
       console.warn('[NotificationsInbox] load failed:', error?.message || error);
-      // Jangan tampilkan toast destructive untuk error non-fatal notifikasi
       if (error?.message && !error.message.includes('notification')) {
         toast({ title: 'Gagal memuat notifikasi', description: error.message || 'Coba buka lagi.', variant: 'destructive' });
       }
@@ -158,22 +110,12 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
     if (open) { setPage(1); setOnlyUnread(false); }
   }, [open]);
 
-  const inboxDebounceRef = useRef(null);
-  const debouncedLoad = useCallback(() => {
-    if (inboxDebounceRef.current) clearTimeout(inboxDebounceRef.current);
-    inboxDebounceRef.current = setTimeout(() => load(), 1500);
-  }, [load]);
-
   useEffect(() => {
     if (!open) return;
     load();
-    const channel = supabase.channel(`notif_inbox_${userId || 'anon'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, debouncedLoad)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, debouncedLoad)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
+    // Note: Realtime subscriptions removed - polling will be handled by API or WebSocket if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, page, pageSize, userId, audienceFilter, onlyUnread]);
+  }, [open, page, pageSize, userId, onlyUnread]);
 
   const displayed = useMemo(() => {
     if (!onlyUnread) return items;
@@ -182,23 +124,24 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
 
   const markRead = async (id) => {
     if (!userId || !id) return;
-    const { error } = await supabase.from('notification_reads')
-      .upsert({ notification_id: id, user_id: userId, read_at: new Date().toISOString() }, { onConflict: 'notification_id,user_id' });
-    if (!error) {
+    try {
+      await notificationsApi.markRead([id]);
       setUnreadSet((prev) => { const next = new Set(prev); next.delete(id); return next; });
-      return;
+    } catch (error) {
+      toast({ title: 'Gagal menandai notifikasi', description: error.message, variant: 'destructive' });
     }
-    toast({ title: 'Gagal menandai notifikasi', description: error.message, variant: 'destructive' });
   };
 
   const markAllRead = async () => {
     if (!userId) return;
     const ids = [...unreadSet];
     if (ids.length === 0) return;
-    const payload = ids.map((id) => ({ notification_id: id, user_id: userId, read_at: new Date().toISOString() }));
-    const { error } = await supabase.from('notification_reads').upsert(payload, { onConflict: 'notification_id,user_id' });
-    if (error) { toast({ title: 'Gagal menandai semua', description: error.message, variant: 'destructive' }); return; }
-    setUnreadSet(new Set());
+    try {
+      await notificationsApi.markRead(ids);
+      setUnreadSet(new Set());
+    } catch (error) {
+      toast({ title: 'Gagal menandai semua', description: error.message, variant: 'destructive' });
+    }
   };
 
   const toggleExpand = (id, e) => {

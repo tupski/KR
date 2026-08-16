@@ -6,6 +6,7 @@
 
 import { query } from '../../config/database.js';
 import { NotFoundError, ForbiddenError } from '../../middleware/errorHandler.js';
+import { logActivity } from '../activity-logs/activityLogs.service.js';
 
 const ADMIN_ROLES = new Set(['admin', 'super_admin']);
 
@@ -105,17 +106,27 @@ export async function getRequestById(id) {
  * @returns {Promise<object>}
  */
 export async function createRequest(
-  { request_type, apartment_location = null, desired_date = null, notes = null, employee_name = null },
+  { request_type, apartment_location = null, desired_date = null, notes = null, employee_name = null, amount = null },
   userId,
 ) {
   const result = await query(
     `INSERT INTO requests
-       (request_type, apartment_location, desired_date, notes, employee_name, created_by, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'Pending')
+       (request_type, apartment_location, desired_date, notes, employee_name, amount, created_by, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending')
      RETURNING *`,
-    [request_type, apartment_location, desired_date, notes, employee_name, userId],
+    [request_type, apartment_location, desired_date, notes, employee_name, amount, userId],
   );
-  return result.rows[0];
+  const newRequest = result.rows[0];
+
+  // Log activity
+  await logActivity({
+    userId,
+    action: 'request_created',
+    details: `Created ${request_type} request`,
+    metadata: { requestId: newRequest.id, requestType: request_type, location: apartment_location },
+  });
+
+  return newRequest;
 }
 
 /**
@@ -127,7 +138,7 @@ export async function createRequest(
  * @returns {Promise<object>}
  */
 export async function updateRequestStatus(id, { status, response_notes = null }, respondedBy) {
-  await getRequestById(id);
+  const existingRequest = await getRequestById(id);
 
   const result = await query(
     `UPDATE requests
@@ -141,7 +152,22 @@ export async function updateRequestStatus(id, { status, response_notes = null },
      RETURNING *`,
     [status, response_notes, respondedBy, id],
   );
-  return result.rows[0];
+  const updatedRequest = result.rows[0];
+
+  // Log activity
+  await logActivity({
+    userId: respondedBy,
+    action: 'request_status_updated',
+    details: `Updated request status to ${status}`,
+    metadata: {
+      requestId: id,
+      oldStatus: existingRequest.status,
+      newStatus: status,
+      requestType: existingRequest.request_type,
+    },
+  });
+
+  return updatedRequest;
 }
 
 /**

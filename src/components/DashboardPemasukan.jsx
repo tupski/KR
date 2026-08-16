@@ -4,7 +4,9 @@ import { TrendingUp, Calendar, Share2, Edit, Trash2, UserCheck, Image as ImageIc
 import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { supabase } from '@/lib/customSupabaseClient';
+import { transactionsApi } from '@/api/transactions.api';
+import { analyticsApi } from '@/api/analytics.api';
+import { locationsApi } from '@/api/locations.api';
 import EditTransaksiModal from '@/components/EditTransaksiModal';
 import ManajemenDeposit from '@/components/ManajemenDeposit';
 import { addDays, addMonths, format, startOfDay, startOfMonth } from 'date-fns';
@@ -122,62 +124,39 @@ const DashboardPemasukan = () => {
       const fromIso = fromDate.toISOString();
       const toIso = toDate.toISOString();
 
-      // Shared filter string — reused by both queries to avoid duplication
-      const dateOr = `and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`;
-      const keywordFilter = debouncedKeyword.trim()
-        ? `customer_name.ilike.%${debouncedKeyword.trim()}%,marketing_name.ilike.%${debouncedKeyword.trim()}%,input_by.ilike.%${debouncedKeyword.trim()}%,apartment_location.ilike.%${debouncedKeyword.trim()}%,room_number.ilike.%${debouncedKeyword.trim()}%`
-        : null;
-
-      // Helper to apply shared lokasi/shift/keyword filters to any query builder
-      const applyFilters = (q) => {
-        if (lokasi !== 'semua') q = q.eq('apartment_location', lokasi);
-        if (shift !== 'semua') q = q.eq('shift', shift);
-        if (keywordFilter) q = q.or(keywordFilter);
-        return q;
+      // Build API params
+      const params = {
+        startDate: fromIso,
+        endDate: toIso,
+        page,
+        limit: ITEMS_PER_PAGE,
       };
+      if (lokasi !== 'semua') params.location = lokasi;
+      if (shift !== 'semua') params.shift = shift;
+      if (debouncedKeyword.trim()) params.search = debouncedKeyword.trim();
 
-      // Query A — lightweight stats aggregate (cash + transfer only, capped at 5000 rows)
-      let statsQuery = supabase
-        .from('transactions')
-        .select('cash_amount, transfer_amount', { count: 'exact' })
-        .or(dateOr)
-        .order('checkin_at', { ascending: false, nullsFirst: false })
-        .range(0, 4999);
-      statsQuery = applyFilters(statsQuery);
+      // Fetch paginated transactions and summary in parallel
+      const [transactionsRes, summaryRes] = await Promise.all([
+        transactionsApi.list(params),
+        transactionsApi.getSummary(params),
+      ]);
 
-      // Query B — paginated full-column list for the current page
-      const from = (page - 1) * ITEMS_PER_PAGE;
-      const to = from + ITEMS_PER_PAGE - 1;
-      let listQuery = supabase
-        .from('transactions')
-        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, transfer_to, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, ktp_image_url, transfer_proof_url')
-        .or(dateOr)
-        .order('checkin_at', { ascending: false, nullsFirst: false })
-        .range(from, to);
-      listQuery = applyFilters(listQuery);
+      // API returns { data, total, page, limit } structure
+      const allTransactions = transactionsRes.data || transactionsRes;
+      const totalCountFromApi = transactionsRes.total || allTransactions.length;
+      const summary = summaryRes.data || summaryRes;
 
-      const [statsResult, listResult] = await Promise.all([statsQuery, listQuery]);
-
-      if (statsResult.error) throw statsResult.error;
-      if (listResult.error) throw listResult.error;
-
-      const allForStats = statsResult.data || [];
-      const count = statsResult.count || 0;
-
-      // Deposit TIDAK masuk ke omset
-      const totalTunai = allForStats.reduce((sum, t) => sum + (t.cash_amount || 0), 0);
-      const totalTransfer = allForStats.reduce((sum, t) => sum + (t.transfer_amount || 0), 0);
-
-      setStats((prev) => ({
-        ...prev,
-        tunai: totalTunai,
-        transfer: totalTransfer,
-        total: totalTunai + totalTransfer,
-        jumlahTransaksi: count,
-      }));
-      setTotalCount(count);
-      setTransaksiList(listResult.data || []);
+      // Update state
+      setTransaksiList(allTransactions);
+      setTotalCount(totalCountFromApi);
       setCurrentPage(page);
+      setStats({
+        tunai: summary.cash_total || summary.tunai || 0,
+        transfer: summary.transfer_total || summary.transfer || 0,
+        total: (summary.cash_total || summary.tunai || 0) + (summary.transfer_total || summary.transfer || 0),
+        jumlahTransaksi: summary.transaction_count || summary.jumlahTransaksi || totalCountFromApi,
+        transaksiHariIni: stats.transaksiHariIni,
+      });
     } catch (error) {
       setTransaksiList([]);
       setTotalCount(0);
@@ -187,20 +166,27 @@ const DashboardPemasukan = () => {
   }, [filterType, startDate, endDate, startTime, endTime, lokasi, shift, debouncedKeyword]);
 
   const loadInitialData = useCallback(async () => {
-    const { data: lokasiData } = await supabase.from('lokasi_apartemen').select('name').order('name');
-    if (lokasiData) {
-      setLokasiOptions(['Semua Lokasi', ...lokasiData.map((l) => l.name)]);
-    }
+    try {
+      // Fetch locations via locations API
+      const locationsRes = await locationsApi.list();
+      const locations = locationsRes.data || locationsRes;
+      
+      if (locations && locations.length > 0) {
+        setLokasiOptions(['Semua Lokasi', ...locations.map((l) => l.name || l)]);
+      }
 
-    const start = startOfDay(new Date());
-    const endExclusive = addDays(start, 1);
-    const { count, error } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .or(`and(checkin_at.gte.${start.toISOString()},checkin_at.lt.${endExclusive.toISOString()}),and(checkin_at.is.null,created_at.gte.${start.toISOString()},created_at.lt.${endExclusive.toISOString()})`);
-
-    if (!error) {
-      setStats((prev) => ({ ...prev, transaksiHariIni: count || 0 }));
+      // Fetch today's transaction count
+      const start = startOfDay(new Date());
+      const endExclusive = addDays(start, 1);
+      const summaryRes = await transactionsApi.getSummary({
+        startDate: start.toISOString(),
+        endDate: endExclusive.toISOString(),
+      });
+      const summary = summaryRes.data || summaryRes;
+      setStats((prev) => ({ ...prev, transaksiHariIni: summary.transaction_count || 0 }));
+    } catch (error) {
+      // Non-critical error, just log it
+      console.error('Failed to load initial data:', error.message);
     }
   }, []);
 
@@ -212,21 +198,11 @@ const DashboardPemasukan = () => {
     loadInitialData();
   }, [loadInitialData]);
 
-  const realtimeDebounceRef = useRef(null);
-  const debouncedRefreshDashboard = useCallback(() => {
-    if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
-    realtimeDebounceRef.current = setTimeout(() => refreshDashboardData(), 1500);
-  }, [refreshDashboardData]);
-
   useEffect(() => {
     // Filter/keyword changes always reset to page 1
     refreshDashboardData(1);
-    const channel = supabase
-      .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedRefreshDashboard)
-      .subscribe();
 
-    // Fallback mobile: beberapa browser mobile/PWA kadang suspend websocket realtime.
+    // Polling fallback since realtime is not available via REST API
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         refreshDashboardData();
@@ -250,7 +226,6 @@ const DashboardPemasukan = () => {
       window.clearInterval(intervalId);
       if (visibilityTimer) clearTimeout(visibilityTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      supabase.removeChannel(channel);
     };
   }, [refreshDashboardData]);
 
@@ -277,26 +252,16 @@ const DashboardPemasukan = () => {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Yakin ingin menghapus transaksi ini?')) return;
-    const { data, error } = await supabase.rpc('delete_transaction_cascade', { p_transaction_id: id });
-    if (error) {
-      toast({ title: 'Gagal menghapus', description: error.message, variant: 'destructive' });
-    } else {
+    try {
+      const result = await transactionsApi.delete(id);
+      const removedInfo = result?.removed_fee_rows ? `, komisi terhapus ${result.removed_fee_rows}` : '';
+      
       setTransaksiList((prev) => prev.filter((t) => t.id !== id));
       setStats((prev) => ({ ...prev, jumlahTransaksi: Math.max((prev.jumlahTransaksi || 1) - 1, 0) }));
-      const removedInfo = data?.removed_fee_rows ? `, komisi terhapus ${data.removed_fee_rows}` : '';
-      const { data: stillExists, error: verifyError } = await supabase
-        .from('transactions')
-        .select('id')
-        .eq('id', id)
-        .maybeSingle();
-      if (verifyError) {
-        toast({ title: 'Transaksi dihapus, verifikasi gagal', description: verifyError.message, variant: 'destructive' });
-      } else if (stillExists?.id) {
-        toast({ title: 'Penghapusan belum sinkron', description: 'Data masih terdeteksi di database, coba muat ulang.', variant: 'destructive' });
-      } else {
-        toast({ title: `Transaksi dihapus${removedInfo}` });
-      }
+      toast({ title: `Transaksi dihapus${removedInfo}` });
       loadTransaksi(currentPage);
+    } catch (error) {
+      toast({ title: 'Gagal menghapus', description: error.message, variant: 'destructive' });
     }
   };
 
@@ -319,29 +284,14 @@ const DashboardPemasukan = () => {
       updateData.customer_name = capitalizeWords(updateData.customer_name);
     }
 
-    const { error, count } = await supabase
-      .from('transactions')
-      .update(updateData, { count: 'exact' })
-      .eq('id', updatedTransaksi.id);
-
-    if (error) {
+    try {
+      await transactionsApi.update(updatedTransaksi.id, updateData);
+      toast({ title: 'Transaksi diperbarui ✅' });
+      setEditingTransaksi(null);
+      loadTransaksi(currentPage);
+    } catch (error) {
       toast({ title: 'Gagal menyimpan', description: error.message, variant: 'destructive' });
-      return;
     }
-
-    if (count === 0) {
-      // 0 rows updated = RLS menolak diam-diam
-      toast({
-        title: 'Gagal menyimpan',
-        description: 'Akses ditolak oleh kebijakan database. Jalankan SQL migration untuk mengizinkan admin mengedit semua transaksi.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    toast({ title: 'Transaksi diperbarui ✅' });
-    setEditingTransaksi(null);
-    loadTransaksi(currentPage);
   };
 
   const handleShare = async (transaksi) => {
@@ -417,28 +367,21 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
 
       const fromIso = fromDate.toISOString();
       const toIso = toDate.toISOString();
-      const dateOr = `and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`;
 
-      let exportQuery = supabase
-        .from('transactions')
-        .select('id, checkin_at, created_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, marketing_fee')
-        .or(dateOr)
-        .order('checkin_at', { ascending: false, nullsFirst: false })
-        .range(0, 4999);
+      // Build export params - use high limit for export (up to 5000 rows)
+      const exportParams = {
+        startDate: fromIso,
+        endDate: toIso,
+        limit: 5000,
+      };
+      if (lokasi !== 'semua') exportParams.location = lokasi;
+      if (shift !== 'semua') exportParams.shift = shift;
+      if (debouncedKeyword.trim()) exportParams.search = debouncedKeyword.trim();
 
-      if (lokasi !== 'semua') exportQuery = exportQuery.eq('apartment_location', lokasi);
-      if (shift !== 'semua') exportQuery = exportQuery.eq('shift', shift);
-      const keyword = debouncedKeyword.trim();
-      if (keyword) {
-        exportQuery = exportQuery.or(
-          `customer_name.ilike.%${keyword}%,marketing_name.ilike.%${keyword}%,input_by.ilike.%${keyword}%,apartment_location.ilike.%${keyword}%,room_number.ilike.%${keyword}%`
-        );
-      }
+      const allData = await transactionsApi.list(exportParams);
+      const transactions = allData.data || allData;
 
-      const { data: allData, error: exportError } = await exportQuery;
-      if (exportError) throw exportError;
-
-      const dataToExport = (allData || []).map((t) => ({
+      const dataToExport = (transactions || []).map((t) => ({
         'Waktu Check-in': formatDateTime(t.checkin_at || t.created_at),
         'Nama Customer': t.customer_name,
         'Nama Marketing': t.marketing_name,

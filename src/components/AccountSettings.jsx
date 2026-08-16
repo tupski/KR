@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/customSupabaseClient';
+import { usersApi } from '@/api/users.api';
+import { authApi } from '@/api/auth.api';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { compressImageFile } from '@/lib/compressImage';
@@ -48,65 +49,23 @@ export default function AccountSettings({ open, onOpenChange }) {
 
   const loadProfile = async () => {
     if (!userId) return;
-    let data;
-    let error;
-    ({ data, error } = await supabase
-      .from('user_profiles')
-      .select('id,email,full_name,phone,avatar_url,role')
-      .eq('id', userId)
-      .maybeSingle());
-    if (error && String(error.message || '').includes('avatar_url')) {
-      // Backward compatible jika DB belum di-migrate
-      ({ data, error } = await supabase
-        .from('user_profiles')
-        .select('id,email,full_name,phone,role')
-        .eq('id', userId)
-        .maybeSingle());
-    }
-    if (error) {
+    try {
+      const data = await usersApi.getMe();
+      const p = data || null;
+      setProfile(p);
+      setFullName(p?.full_name || user?.user_metadata?.full_name || '');
+      setEmail(p?.email || user?.email || '');
+      setAvatarUrl(p?.avatar_url || '');
+
+      const rawPhone = String(p?.phone || '').trim();
+      const normalized = rawPhone.replace(/\\s+/g, '');
+      if (normalized.startsWith('+62')) setPhone(normalized.slice(3));
+      else if (normalized.startsWith('62')) setPhone(normalized.slice(2));
+      else if (normalized.startsWith('0')) setPhone(normalized.slice(1));
+      else setPhone(normalized);
+    } catch (error) {
       toast({ title: 'Gagal memuat profil', description: error.message, variant: 'destructive' });
-      return;
     }
-
-    // Jika belum ada row profile, buat minimal row agar update tidak jadi no-op.
-    if (!data) {
-      await supabase.from('user_profiles').upsert(
-        {
-          id: userId,
-          email: user?.email || '',
-          full_name: user?.user_metadata?.full_name || null,
-          phone: null,
-          role: userRole || 'karyawan',
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      );
-      ({ data, error } = await supabase
-        .from('user_profiles')
-        .select('id,email,full_name,phone,avatar_url,role')
-        .eq('id', userId)
-        .maybeSingle());
-      if (error && String(error.message || '').includes('avatar_url')) {
-        ({ data } = await supabase
-          .from('user_profiles')
-          .select('id,email,full_name,phone,role')
-          .eq('id', userId)
-          .maybeSingle());
-      }
-    }
-
-    const p = data || null;
-    setProfile(p);
-    setFullName(p?.full_name || user?.user_metadata?.full_name || '');
-    setEmail(p?.email || user?.email || '');
-    setAvatarUrl(p?.avatar_url || '');
-
-    const rawPhone = String(p?.phone || '').trim();
-    const normalized = rawPhone.replace(/\\s+/g, '');
-    if (normalized.startsWith('+62')) setPhone(normalized.slice(3));
-    else if (normalized.startsWith('62')) setPhone(normalized.slice(2));
-    else if (normalized.startsWith('0')) setPhone(normalized.slice(1));
-    else setPhone(normalized);
   };
 
   useEffect(() => {
@@ -126,19 +85,10 @@ export default function AccountSettings({ open, onOpenChange }) {
       const compressed = await compressImageFile(file, { maxWidth: 1024, maxHeight: 1024, quality: 0.85 });
       const url = await uploadToVercelBlob(compressed, 'avatars');
       setAvatarUrl(url);
-      // Simpan ke user_profiles
-      const { error } = await supabase.from('user_profiles').update({ avatar_url: url, updated_at: new Date().toISOString() }).eq('id', userId);
-      if (error && String(error.message || '').includes('avatar_url')) {
-        toast({
-          title: 'Kolom avatar_url belum ada',
-          description: 'Jalankan update schema Supabase (ALTER TABLE user_profiles ADD COLUMN avatar_url). Foto profil tetap disimpan di akun.',
-          variant: 'destructive',
-        });
-      } else if (error) {
-        throw error;
-      }
+      // Simpan ke user_profiles via REST API
+      await usersApi.updateMyProfile({ avatar_url: url });
       // Update metadata agar header langsung ikut
-      await supabase.auth.updateUser({ data: { avatar_url: url } });
+      await authApi.updateMetadata({ avatar_url: url });
       await refreshSession?.();
       toast({ title: 'Foto profil diperbarui' });
     } catch (e) {
@@ -155,16 +105,12 @@ export default function AccountSettings({ open, onOpenChange }) {
     try {
       const cleanedPhone = String(phone || '').replace(/\\D/g, '');
       const phoneWithPrefix = cleanedPhone ? `+62${cleanedPhone}` : null;
-      const payload = {
-        id: userId,
-        email: user?.email || email || '',
+      await usersApi.updateMyProfile({
         full_name: String(fullName || '').trim() || null,
         phone: phoneWithPrefix,
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from('user_profiles').upsert(payload, { onConflict: 'id' });
-      if (error) throw error;
-      await supabase.auth.updateUser({ data: { full_name: payload.full_name || '' } });
+      });
+      // Update metadata agar header langsung ikut
+      await authApi.updateMetadata({ full_name: String(fullName || '').trim() || '' });
       await refreshSession?.();
       toast({ title: 'Profil disimpan' });
       await loadProfile();
@@ -192,11 +138,7 @@ export default function AccountSettings({ open, onOpenChange }) {
     }
     setLoading(true);
     try {
-      // re-auth
-      const { error: signErr } = await supabase.auth.signInWithPassword({ email: userEmail, password: oldPassword });
-      if (signErr) throw signErr;
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
+      await authApi.changePassword(oldPassword, newPassword);
       toast({ title: 'Password berhasil diganti' });
       setOldPassword('');
       setNewPassword('');
@@ -211,8 +153,7 @@ export default function AccountSettings({ open, onOpenChange }) {
   const handleSignOutAllDevices = async () => {
     setSigningOut(true);
     try {
-      const { error } = await supabase.rpc('sign_out_own_devices');
-      if (error) throw error;
+      await authApi.signOutAllDevices();
       toast({ title: 'Semua perangkat telah logout' });
       setSignOutDialogOpen(false);
     } catch (e) {
