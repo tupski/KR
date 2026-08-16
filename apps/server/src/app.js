@@ -8,6 +8,7 @@ import express from 'express';
 import { corsMiddleware } from './middleware/cors.middleware.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import storageRoutes from './modules/storage/storage.routes.js';
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.get('/health', (_req, res) => {
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/api/storage', storageRoutes);
 
 // ── 404 catch-all ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {
