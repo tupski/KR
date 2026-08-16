@@ -27,6 +27,7 @@ const DashboardPemasukan = () => {
   const [lokasi, setLokasi] = useState('semua');
   const [shift, setShift] = useState('semua');
   const [transaksiList, setTransaksiList] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ tunai: 0, transfer: 0, total: 0, jumlahTransaksi: 0, transaksiHariIni: 0 });
   const [lokasiOptions, setLokasiOptions] = useState(['Semua Lokasi']);
   const [editingTransaksi, setEditingTransaksi] = useState(null);
@@ -92,7 +93,7 @@ const DashboardPemasukan = () => {
     return new Date(year, month - 1, day, 0, 0, 0, 0);
   };
 
-  const loadTransaksi = useCallback(async () => {
+  const loadTransaksi = useCallback(async (page = 1) => {
     try {
       let fromDate;
       let toDate;
@@ -120,39 +121,66 @@ const DashboardPemasukan = () => {
 
       const fromIso = fromDate.toISOString();
       const toIso = toDate.toISOString();
-      let query = supabase
+
+      // Shared filter string — reused by both queries to avoid duplication
+      const dateOr = `and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`;
+      const keywordFilter = debouncedKeyword.trim()
+        ? `customer_name.ilike.%${debouncedKeyword.trim()}%,marketing_name.ilike.%${debouncedKeyword.trim()}%,input_by.ilike.%${debouncedKeyword.trim()}%,apartment_location.ilike.%${debouncedKeyword.trim()}%,room_number.ilike.%${debouncedKeyword.trim()}%`
+        : null;
+
+      // Helper to apply shared lokasi/shift/keyword filters to any query builder
+      const applyFilters = (q) => {
+        if (lokasi !== 'semua') q = q.eq('apartment_location', lokasi);
+        if (shift !== 'semua') q = q.eq('shift', shift);
+        if (keywordFilter) q = q.or(keywordFilter);
+        return q;
+      };
+
+      // Query A — lightweight stats aggregate (cash + transfer only, capped at 5000 rows)
+      let statsQuery = supabase
+        .from('transactions')
+        .select('cash_amount, transfer_amount', { count: 'exact' })
+        .or(dateOr)
+        .order('checkin_at', { ascending: false, nullsFirst: false })
+        .range(0, 4999);
+      statsQuery = applyFilters(statsQuery);
+
+      // Query B — paginated full-column list for the current page
+      const from = (page - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE - 1;
+      let listQuery = supabase
         .from('transactions')
         .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, payment_method, category, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, receipt_url')
-        .or(`and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`);
+        .or(dateOr)
+        .order('checkin_at', { ascending: false, nullsFirst: false })
+        .range(from, to);
+      listQuery = applyFilters(listQuery);
 
-      if (lokasi !== 'semua') query = query.eq('apartment_location', lokasi);
-      if (shift !== 'semua') query = query.eq('shift', shift);
-      const keyword = debouncedKeyword.trim();
-      if (keyword) {
-        query = query.or(
-          `customer_name.ilike.%${keyword}%,marketing_name.ilike.%${keyword}%,input_by.ilike.%${keyword}%,apartment_location.ilike.%${keyword}%,room_number.ilike.%${keyword}%`
-        );
-      }
+      const [statsResult, listResult] = await Promise.all([statsQuery, listQuery]);
 
-      const { data: filteredData, error } = await query;
-      if (error) throw error;
+      if (statsResult.error) throw statsResult.error;
+      if (listResult.error) throw listResult.error;
 
-      const list = (filteredData || []).sort((a, b) => new Date(b.checkin_at || b.created_at) - new Date(a.checkin_at || a.created_at));
+      const allForStats = statsResult.data || [];
+      const count = statsResult.count || 0;
+
       // Deposit TIDAK masuk ke omset
-      const totalTunai = list.reduce((sum, t) => sum + (t.cash_amount || 0), 0);
-      const totalTransfer = list.reduce((sum, t) => sum + (t.transfer_amount || 0), 0);
+      const totalTunai = allForStats.reduce((sum, t) => sum + (t.cash_amount || 0), 0);
+      const totalTransfer = allForStats.reduce((sum, t) => sum + (t.transfer_amount || 0), 0);
 
       setStats((prev) => ({
         ...prev,
         tunai: totalTunai,
         transfer: totalTransfer,
         total: totalTunai + totalTransfer,
-        jumlahTransaksi: list.length,
+        jumlahTransaksi: count,
       }));
-      setTransaksiList(list);
-      setCurrentPage(1);
+      setTotalCount(count);
+      setTransaksiList(listResult.data || []);
+      setCurrentPage(page);
     } catch (error) {
       setTransaksiList([]);
+      setTotalCount(0);
       setStats((prev) => ({ ...prev, tunai: 0, transfer: 0, total: 0, jumlahTransaksi: 0 }));
       toast({ title: 'Gagal memuat transaksi', description: error.message, variant: 'destructive' });
     }
@@ -176,8 +204,8 @@ const DashboardPemasukan = () => {
     }
   }, []);
 
-  const refreshDashboardData = useCallback(async () => {
-    await Promise.all([loadTransaksi(), loadInitialData()]);
+  const refreshDashboardData = useCallback(async (page = 1) => {
+    await Promise.all([loadTransaksi(page), loadInitialData()]);
   }, [loadTransaksi, loadInitialData]);
 
   useEffect(() => {
@@ -191,7 +219,8 @@ const DashboardPemasukan = () => {
   }, [refreshDashboardData]);
 
   useEffect(() => {
-    refreshDashboardData();
+    // Filter/keyword changes always reset to page 1
+    refreshDashboardData(1);
     const channel = supabase
       .channel('realtime-dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedRefreshDashboard)
@@ -267,7 +296,7 @@ const DashboardPemasukan = () => {
       } else {
         toast({ title: `Transaksi dihapus${removedInfo}` });
       }
-      loadTransaksi();
+      loadTransaksi(currentPage);
     }
   };
 
@@ -312,7 +341,7 @@ const DashboardPemasukan = () => {
 
     toast({ title: 'Transaksi diperbarui ✅' });
     setEditingTransaksi(null);
-    loadTransaksi();
+    loadTransaksi(currentPage);
   };
 
   const handleShare = async (transaksi) => {
@@ -360,33 +389,82 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
     }
   };
 
-  const handleExport = () => {
-    const dataToExport = transaksiList.map((t) => ({
-      'Waktu Check-in': formatDateTime(t.checkin_at || t.created_at),
-      'Nama Customer': t.customer_name,
-      'Nama Marketing': t.marketing_name,
-      Lokasi: t.apartment_location,
-      Kamar: t.room_number,
-      'Lama Sewa': formatRentalDuration(t.rental_duration),
-      Shift: t.shift,
-      Tunai: t.cash_amount,
-      Transfer: t.transfer_amount,
-      Total: (t.cash_amount || 0) + (t.transfer_amount || 0),
-      'Fee Marketing': t.marketing_fee,
-      'Diinput Oleh': t.input_by,
-    }));
+  const handleExport = async () => {
+    // transaksiList only holds the current page — fetch all rows for export separately.
+    try {
+      let fromDate;
+      let toDate;
 
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Transaksi');
-    XLSX.writeFile(workbook, `Laporan_Transaksi_${startDate}_${endDate}.xlsx`);
+      switch (filterType) {
+        case 'harian':
+          fromDate = startOfDay(parseLocalDateInput(startDate));
+          toDate = addDays(fromDate, 1);
+          break;
+        case 'bulanan': {
+          const monthDate = parseLocalDateInput(startDate);
+          fromDate = startOfMonth(monthDate);
+          toDate = addMonths(fromDate, 1);
+          break;
+        }
+        case 'rentang':
+          fromDate = new Date(`${startDate}T${startTime || '00:00'}:00`);
+          toDate = new Date(new Date(`${endDate}T${endTime || '23:59'}:59`).getTime() + 1000);
+          break;
+        default:
+          fromDate = startOfDay(new Date());
+          toDate = addDays(fromDate, 1);
+      }
+
+      const fromIso = fromDate.toISOString();
+      const toIso = toDate.toISOString();
+      const dateOr = `and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`;
+
+      let exportQuery = supabase
+        .from('transactions')
+        .select('id, checkin_at, created_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, marketing_fee')
+        .or(dateOr)
+        .order('checkin_at', { ascending: false, nullsFirst: false })
+        .range(0, 4999);
+
+      if (lokasi !== 'semua') exportQuery = exportQuery.eq('apartment_location', lokasi);
+      if (shift !== 'semua') exportQuery = exportQuery.eq('shift', shift);
+      const keyword = debouncedKeyword.trim();
+      if (keyword) {
+        exportQuery = exportQuery.or(
+          `customer_name.ilike.%${keyword}%,marketing_name.ilike.%${keyword}%,input_by.ilike.%${keyword}%,apartment_location.ilike.%${keyword}%,room_number.ilike.%${keyword}%`
+        );
+      }
+
+      const { data: allData, error: exportError } = await exportQuery;
+      if (exportError) throw exportError;
+
+      const dataToExport = (allData || []).map((t) => ({
+        'Waktu Check-in': formatDateTime(t.checkin_at || t.created_at),
+        'Nama Customer': t.customer_name,
+        'Nama Marketing': t.marketing_name,
+        Lokasi: t.apartment_location,
+        Kamar: t.room_number,
+        'Lama Sewa': formatRentalDuration(t.rental_duration),
+        Shift: t.shift,
+        Tunai: t.cash_amount,
+        Transfer: t.transfer_amount,
+        Total: (t.cash_amount || 0) + (t.transfer_amount || 0),
+        'Fee Marketing': t.marketing_fee,
+        'Diinput Oleh': t.input_by,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Transaksi');
+      XLSX.writeFile(workbook, `Laporan_Transaksi_${startDate}_${endDate}.xlsx`);
+    } catch (err) {
+      toast({ title: 'Gagal ekspor', description: err.message, variant: 'destructive' });
+    }
   };
 
-  const totalPages = Math.max(1, Math.ceil(transaksiList.length / ITEMS_PER_PAGE));
-  const paginatedTransaksi = useMemo(() => {
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return transaksiList.slice(start, start + ITEMS_PER_PAGE);
-  }, [transaksiList, currentPage]);
+  // Server-side pagination: transaksiList already holds only the current page's rows.
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
+  const paginatedTransaksi = transaksiList;
 
   return (
     <>
@@ -561,11 +639,27 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
 
                 {totalPages > 1 && activeMainTab === 'umum' && (
                   <div className="mt-4 flex items-center justify-between">
-                    <Button size="sm" variant="outline" disabled={currentPage <= 1} onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={currentPage <= 1}
+                      onClick={() => {
+                        const newPage = Math.max(currentPage - 1, 1);
+                        loadTransaksi(newPage);
+                      }}
+                    >
                       <ChevronLeft className="mr-1 h-4 w-4" /> Sebelumnya
                     </Button>
                     <p className="text-xs text-gray-600">Halaman {currentPage} dari {totalPages}</p>
-                    <Button size="sm" variant="outline" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => {
+                        const newPage = Math.min(currentPage + 1, totalPages);
+                        loadTransaksi(newPage);
+                      }}
+                    >
                       Berikutnya <ChevronRight className="ml-1 h-4 w-4" />
                     </Button>
                   </div>
