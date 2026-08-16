@@ -132,16 +132,19 @@ export function useDayInfo() {
     const nextMonth = new Date(today);
     nextMonth.setMonth(today.getMonth() + 1);
 
+    const todayDateStr = `${todayY}-${String(todayM).padStart(2,'0')}-${String(todayD).padStart(2,'0')}`;
+    const tomDateStr = `${tomY}-${String(tomM).padStart(2,'0')}-${String(tomD).padStart(2,'0')}`;
+
     Promise.all([
-      fetch(`https://libur.deno.dev/api?year=${todayY}&month=${todayM}&day=${todayD}`).then(r => r.json()).catch(() => null),
-      fetch(`https://libur.deno.dev/api?year=${tomY}&month=${tomM}&day=${tomD}`).then(r => r.json()).catch(() => null),
-      fetch(`https://libur.deno.dev/api?year=${todayY}&month=${todayM}`).then(r => r.json()).catch(() => []),
-      fetch(`https://libur.deno.dev/api?year=${nextMonth.getFullYear()}&month=${nextMonth.getMonth()+1}`).then(r => r.json()).catch(() => []),
+      fetch(`https://tanggalmerah.upset.dev/api/check?date=${todayDateStr}`).then(r => r.json()).catch(() => null),
+      fetch(`https://tanggalmerah.upset.dev/api/check?date=${tomDateStr}`).then(r => r.json()).catch(() => null),
+      fetch(`https://tanggalmerah.upset.dev/api/holidays?year=${todayY}&month=${todayM}`).then(r => r.json()).catch(() => []),
+      fetch(`https://tanggalmerah.upset.dev/api/holidays?year=${nextMonth.getFullYear()}&month=${nextMonth.getMonth()+1}`).then(r => r.json()).catch(() => []),
     ]).then(([todayData, tomorrowData, thisMonthData, nextMonthData]) => {
       // Today
-      const todayIsHoliday = todayData?.is_holiday === true;
+      const todayIsHoliday = todayData?.data?.is_holiday === true;
       const todayHolidayName = todayIsHoliday
-        ? (Array.isArray(todayData?.holiday_list) ? todayData.holiday_list[0] : null) || 'Libur Nasional'
+        ? todayData?.data?.holidays?.[0]?.name || 'Libur Nasional'
         : null;
 
       setTodayInfo({
@@ -153,9 +156,9 @@ export function useDayInfo() {
       });
 
       // Tomorrow
-      const tomIsHoliday = tomorrowData?.is_holiday === true;
+      const tomIsHoliday = tomorrowData?.data?.is_holiday === true;
       const tomHolidayName = tomIsHoliday
-        ? (Array.isArray(tomorrowData?.holiday_list) ? tomorrowData.holiday_list[0] : null) || 'Libur Nasional'
+        ? tomorrowData?.data?.holidays?.[0]?.name || 'Libur Nasional'
         : null;
 
       setTomorrowInfo({
@@ -167,7 +170,7 @@ export function useDayInfo() {
 
       // Build holiday map for long holiday detection
       const holidayMap = {};
-      const allMonthData = [...(Array.isArray(thisMonthData) ? thisMonthData : []), ...(Array.isArray(nextMonthData) ? nextMonthData : [])];
+      const allMonthData = [...(Array.isArray(thisMonthData?.data) ? thisMonthData.data : []), ...(Array.isArray(nextMonthData?.data) ? nextMonthData.data : [])];
       allMonthData.forEach(item => { if (item.date && item.name) holidayMap[item.date] = item.name; });
 
       // Detect long holiday

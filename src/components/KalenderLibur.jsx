@@ -40,12 +40,12 @@ const KalenderLibur = ({ open, onOpenChange, showTagihan = false }) => {
       return;
     }
     setLiburLoading(true);
-    fetch(`https://libur.deno.dev/api?year=${viewYear}`)
+    fetch(`https://tanggalmerah.upset.dev/api/holidays?year=${viewYear}`)
       .then(r => r.json())
       .then(data => {
-        // data: Array<{ date: "YYYY-MM-DD", name: string, is_national_holiday: boolean }>
+        // data.data: Array<{ date: "YYYY-MM-DD", day: string, name: string, type: "holiday"|"leave" }>
         const map = {};
-        (data || []).forEach(item => {
+        (data?.data || []).forEach(item => {
           if (item.date && item.name) map[item.date] = item.name;
         });
         liburCache.current[viewYear] = map;
