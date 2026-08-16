@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/customSupabaseClient';
+import { usersApi } from '@/api/users.api';
 import {
   Users,
   Edit,
@@ -67,14 +67,7 @@ const UserManagement = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-
-      // Ambil profil pengguna beserta peran (aman untuk frontend tanpa endpoint admin)
-      const { data: profiles, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('*');
-
-      if (profileError) throw profileError;
-
+      const profiles = await usersApi.list();
       setUsers(profiles || []);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -86,17 +79,11 @@ const UserManagement = () => {
 
   const handleUpdateUser = async () => {
     try {
-      // Perbarui profil pengguna
-      const { error: profileError } = await supabase
-        .from('user_profiles')
-        .update({
-          full_name: formData.full_name,
-          phone: formData.phone,
-          role: formData.role
-        })
-        .eq('id', selectedUser.id);
-
-      if (profileError) throw profileError;
+      await usersApi.update(selectedUser.id, {
+        full_name: formData.full_name,
+        phone: formData.phone,
+        role: formData.role
+      });
 
       toast.success('Data karyawan berhasil diperbarui');
       setIsEditDialogOpen(false);

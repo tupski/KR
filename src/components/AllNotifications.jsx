@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
 import NotificationPreferences from '@/components/NotificationPreferences';
 import { notificationsApi } from '@/api/notifications.api';

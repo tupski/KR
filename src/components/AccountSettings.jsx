@@ -15,8 +15,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { usersApi } from '@/api/users.api';
 import { authApi } from '@/api/auth.api';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
+import { useAuth } from '@/contexts/AuthContext';
+import { uploadToStorage } from '@/api/storage.api';
 import { compressImageFile } from '@/lib/compressImage';
 import { isPushSupported, registerPushSubscription, saveSubscriptionToSupabase } from '@/lib/pushClient';
 

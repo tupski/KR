@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/customSupabaseClient';
+import { menuApi } from '@/api/menu.api';
+import { usersApi } from '@/api/users.api';
 import {
   Settings,
   Users,
@@ -62,15 +63,9 @@ const MenuControls = () => {
 
   const fetchUserRoles = async () => {
     try {
-      // Ambil role unik dari user_profiles
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .not('role', 'is', null);
-
-      if (error) throw error;
-
-      const profileRoles = [...new Set((data || []).map(item => item.role).filter(Boolean))];
+      // Get unique roles from users via API
+      const users = await usersApi.list();
+      const profileRoles = [...new Set((users || []).map(item => item.role).filter(Boolean))];
       const mergedRoles = [...new Set([...fallbackRoles, ...profileRoles])];
       setUserRoles(mergedRoles);
     } catch (error) {
@@ -83,16 +78,11 @@ const MenuControls = () => {
   const fetchMenuVisibility = async () => {
     try {
       setLoading(true);
+      const data = await menuApi.getVisibility();
 
-      const { data, error } = await supabase
-        .from('role_menu_visibility')
-        .select('*');
-
-      if (error) throw error;
-
-      // Ubah ke format object agar mudah dikelola
+      // Transform to object format for easy management
       const visibilityMap = {};
-      data.forEach(item => {
+      (data || []).forEach(item => {
         if (!visibilityMap[item.role]) {
           visibilityMap[item.role] = {};
         }
@@ -110,20 +100,13 @@ const MenuControls = () => {
 
   const updateMenuVisibility = async (role, menuItemId, isVisible) => {
     try {
-      const { error } = await supabase
-        .from('role_menu_visibility')
-        .upsert({
-          role,
-          menu_item_id: menuItemId,
-          is_visible: isVisible,
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'role,menu_item_id'
-        });
+      await menuApi.setVisibility({
+        role,
+        menu_item_id: menuItemId,
+        is_visible: isVisible
+      });
 
-      if (error) throw error;
-
-      // Perbarui state lokal
+      // Update local state
       setMenuVisibility(prev => ({
         ...prev,
         [role]: {
@@ -162,41 +145,10 @@ const MenuControls = () => {
   const resetToDefaults = async () => {
     try {
       setSaving(true);
+      await menuApi.resetVisibility();
 
-      // Reset visibilitas menu ke default berdasarkan role di MenuConfig
-      const defaultVisibility = {};
-
-      MENU_ITEMS.forEach(item => {
-        item.roles.forEach(role => {
-          if (!defaultVisibility[role]) {
-            defaultVisibility[role] = {};
-          }
-          defaultVisibility[role][item.id] = true;
-        });
-      });
-
-      // Perbarui ke database
-      const updates = [];
-      Object.keys(defaultVisibility).forEach(role => {
-        Object.keys(defaultVisibility[role]).forEach(menuItemId => {
-          updates.push({
-            role,
-            menu_item_id: menuItemId,
-            is_visible: defaultVisibility[role][menuItemId],
-            updated_at: new Date().toISOString()
-          });
-        });
-      });
-
-      const { error } = await supabase
-        .from('role_menu_visibility')
-        .upsert(updates, {
-          onConflict: 'role,menu_item_id'
-        });
-
-      if (error) throw error;
-
-      setMenuVisibility(defaultVisibility);
+      // Re-fetch visibility after reset
+      await fetchMenuVisibility();
       toast.success('Visibilitas menu direset ke default');
     } catch (error) {
       console.error('Error resetting to defaults:', error);

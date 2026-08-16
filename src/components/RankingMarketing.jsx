@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, TrendingUp, Users } from 'lucide-react';
-import { supabase } from '@/lib/customSupabaseClient';
+import { transactionsApi } from '@/api/transactions.api';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -35,14 +35,14 @@ const RankingMarketing = () => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const loadRankings = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at');
-    if (error) {
+    try {
+      // Fetch all transactions with marketing data
+      // Note: In production, consider adding a dedicated API endpoint for marketing rankings
+      const data = await transactionsApi.list({ limit: 1000 });
+      setRows(data || []);
+    } catch (error) {
       console.error('Error fetching rankings:', error);
-      return;
     }
-    setRows(data || []);
   };
 
   useEffect(() => {

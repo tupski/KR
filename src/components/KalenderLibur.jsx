@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { supabase } from '@/lib/customSupabaseClient';
+import { financeApi } from '@/api/finance.api';
 
 const NAMA_BULAN = [
   'Januari','Februari','Maret','April','Mei','Juni',
@@ -65,11 +65,12 @@ const KalenderLibur = ({ open, onOpenChange, showTagihan = false }) => {
       setTagihanList([]);
       return;
     }
-    supabase
-      .from('tagihan_bulanan')
-      .select('apartment_location, room_number, due_date')
-      .eq('status', 'unpaid')
-      .then(({ data }) => setTagihanList(data || []));
+    financeApi.listTagihanBulanan({ status: 'unpaid' })
+      .then((data) => setTagihanList(data || []))
+      .catch((error) => {
+        console.error('Error fetching tagihan:', error);
+        setTagihanList([]);
+      });
   }, [open, showTagihan]);
 
   // Reset picker mode saat dialog ditutup

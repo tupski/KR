@@ -10,8 +10,7 @@ import {
   differenceInDays,
   parseISO,
 } from 'date-fns';
-import { supabase } from '@/lib/customSupabaseClient';
-import { clearRpcCache } from '@/hooks/useRpcQuery';
+import { locationsApi } from '@/api/locations.api';
 
 import KpiCardsHeader from './analytics/KpiCardsHeader';
 import YoYComparisonSection from './analytics/YoYComparisonSection';
@@ -215,7 +214,6 @@ const AnalyticsDashboard = () => {
   // sehingga refetch dijalankan ulang.
   const [refreshKey, setRefreshKey] = useState(0);
   const handleGlobalRefresh = () => {
-    clearRpcCache();
     setRefreshKey((k) => k + 1);
   };
 
@@ -225,11 +223,11 @@ const AnalyticsDashboard = () => {
   // ---- Fetch location options on mount ----
   useEffect(() => {
     const fetchLocations = async () => {
-      const { data, error } = await supabase
-        .from('lokasi_apartemen')
-        .select('name');
-      if (!error && data) {
-        setLocationOptions(data.map((row) => row.name));
+      try {
+        const data = await locationsApi.list();
+        setLocationOptions((data || []).map((row) => row.name));
+      } catch (error) {
+        console.error('Error fetching locations:', error);
       }
     };
     fetchLocations();

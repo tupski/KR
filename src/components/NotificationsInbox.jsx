@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
 import { notificationsApi } from '@/api/notifications.api';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
 import PaginationControls from '@/components/PaginationControls';
 

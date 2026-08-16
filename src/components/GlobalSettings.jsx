@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/customSupabaseClient';
+import { settingsApi } from '@/api/settings.api';
 import { 
   Settings, Save, RefreshCw, Smartphone, 
-  AlertTriangle, CheckCircle, Megaphone, 
+  AlertTriangle, Megaphone, 
   Info, ShieldCheck, Globe
 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -31,18 +31,10 @@ const GlobalSettings = () => {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('system_settings')
-        .select('*');
-
-      if (error) throw error;
-
+      const data = await settingsApi.getAll();
+      
       if (data) {
-        const settingsObj = {};
-        data.forEach(item => {
-          settingsObj[item.key] = item.value;
-        });
-        setSettings(prev => ({ ...prev, ...settingsObj }));
+        setSettings(prev => ({ ...prev, ...data }));
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -56,17 +48,12 @@ const GlobalSettings = () => {
     try {
       setSaving(true);
       
-      const updates = Object.keys(settings).map(key => ({
-        key,
-        value: settings[key],
-        updated_at: new Date().toISOString()
-      }));
-
-      const { error } = await supabase
-        .from('system_settings')
-        .upsert(updates, { onConflict: 'key' });
-
-      if (error) throw error;
+      // Update each setting individually via the API
+      await Promise.all(
+        Object.keys(settings).map(key => 
+          settingsApi.update(key, { value: settings[key] })
+        )
+      );
 
       toast({ title: "Pengaturan disimpan! ✅", description: "Perubahan telah diterapkan ke seluruh sistem." });
     } catch (error) {

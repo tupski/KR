@@ -18,17 +18,14 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import * as fc from 'fast-check';
 
 // ---------------------------------------------------------------------------
-// Mock supabase BEFORE importing any section component (which transitively
-// imports useRpcQuery → @/lib/customSupabaseClient).
+// Mock @/api/client BEFORE importing any section component (which transitively
+// imports useRpcQuery → @/api/client).
 // ---------------------------------------------------------------------------
-vi.mock('@/lib/customSupabaseClient', () => {
-  const rpcMock = vi.fn();
+vi.mock('@/api/client', () => {
+  const getMock = vi.fn();
   return {
-    supabase: {
-      rpc: rpcMock,
-      from: vi.fn(() => ({
-        select: vi.fn(() => Promise.resolve({ data: [], error: null })),
-      })),
+    api: {
+      get: getMock,
     },
   };
 });
@@ -63,7 +60,7 @@ vi.mock('recharts', () => {
   };
 });
 
-import { supabase } from '@/lib/customSupabaseClient';
+import { api } from '@/api/client';
 import { clearRpcCache } from '@/hooks/useRpcQuery';
 import OccupancyByLocationSection from './OccupancyByLocationSection';
 import ProfitSection from './ProfitSection';
@@ -75,52 +72,52 @@ import StayDurationSection from './StayDurationSection';
 import DailyRevenueTrendSection from './DailyRevenueTrendSection';
 
 // ---------------------------------------------------------------------------
-// Section registry — RPC name ↔ Component ↔ Display name (used in SectionError)
+// Section registry — API endpoint ↔ Component ↔ Display name (used in SectionError)
 // ---------------------------------------------------------------------------
 const SECTIONS = [
   {
-    rpcName: 'get_occupancy_per_location',
+    endpoint: '/api/analytics/occupancy-by-location',
     Component: OccupancyByLocationSection,
     displayName: 'Okupansi per Lokasi Apartemen',
   },
   {
-    rpcName: 'get_profit_per_location',
+    endpoint: '/api/analytics/profit-per-location',
     Component: ProfitSection,
     displayName: 'Profit per Lokasi',
   },
   {
-    rpcName: 'get_checkin_heatmap',
+    endpoint: '/api/analytics/checkin-heatmap',
     Component: CheckinHeatmapSection,
     displayName: 'Jam Check-in Ramai',
   },
   {
-    rpcName: 'get_guest_source_summary',
+    endpoint: '/api/analytics/guest-sources',
     Component: GuestSourceSection,
     displayName: 'Sumber Tamu',
   },
   {
-    rpcName: 'get_repeat_guests',
+    endpoint: '/api/analytics/repeat-guests',
     Component: RepeatGuestSection,
     displayName: 'Repeat Guest',
   },
   {
-    rpcName: 'get_location_fullness',
+    endpoint: '/api/analytics/location-fullness',
     Component: LocationFullnessSection,
     displayName: 'Lokasi Sering Penuh',
   },
   {
-    rpcName: 'get_stay_duration_summary',
+    endpoint: '/api/analytics/stay-duration',
     Component: StayDurationSection,
     displayName: 'Durasi Menginap',
   },
   {
-    rpcName: 'get_daily_revenue_trend',
+    endpoint: '/api/analytics/daily-revenue',
     Component: DailyRevenueTrendSection,
     displayName: 'Tren Pendapatan Harian',
   },
 ];
 
-const RPC_NAMES = SECTIONS.map((s) => s.rpcName);
+const ENDPOINTS = SECTIONS.map((s) => s.endpoint);
 
 // Helper: build a regex matching the SectionError header for a display name.
 // SectionError renders: "<displayName>: Data tidak tersedia".
@@ -135,8 +132,8 @@ function sectionErrorRegex(displayName) {
 function AllSections({ filter }) {
   return (
     <div>
-      {SECTIONS.map(({ rpcName, Component }) => (
-        <Component key={rpcName} filter={filter} />
+      {SECTIONS.map(({ endpoint, Component }) => (
+        <Component key={endpoint} filter={filter} />
       ))}
     </div>
   );
@@ -167,13 +164,13 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
    *
    * Feature: analytics-dashboard, Property 6: Error isolation antar section
    *
-   * For any subset S ⊆ {8 RPC names} with |S| ∈ [1, 8]:
-   *   - Mock supabase.rpc to return { data: null, error } for every rpcName ∈ S
-   *     and { data: [], error: null } for every rpcName ∉ S.
+   * For any subset S ⊆ {8 API endpoints} with |S| ∈ [1, 8]:
+   *   - Mock api.get to throw error for every endpoint ∈ S
+   *     and return { data: [] } for every endpoint ∉ S.
    *   - After all section fetches settle:
-   *       * For every section whose rpcName ∈ S, its SectionError header
+   *       * For every section whose endpoint ∈ S, its SectionError header
    *         "<displayName>: Data tidak tersedia" SHALL be present in the DOM.
-   *       * For every section whose rpcName ∉ S, that header SHALL NOT be
+   *       * For every section whose endpoint ∉ S, that header SHALL NOT be
    *         present (the section renders SectionEmpty instead, since data=[]).
    *
    * Validates: Requirements 2.6, 5.6
@@ -183,20 +180,17 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
     async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.subarray(RPC_NAMES, { minLength: 1, maxLength: RPC_NAMES.length }),
-          async (failingRpcs) => {
-            const failingSet = new Set(failingRpcs);
+          fc.subarray(ENDPOINTS, { minLength: 1, maxLength: ENDPOINTS.length }),
+          async (failingEndpoints) => {
+            const failingSet = new Set(failingEndpoints);
             clearRpcCache();
 
-            // Configure the supabase.rpc mock for this iteration.
-            supabase.rpc.mockImplementation((rpcName) => {
-              if (failingSet.has(rpcName)) {
-                return Promise.resolve({
-                  data: null,
-                  error: { message: `Forced fail for ${rpcName}` },
-                });
+            // Configure the api.get mock for this iteration.
+            api.get.mockImplementation((endpoint) => {
+              if (failingSet.has(endpoint)) {
+                return Promise.reject(new Error(`Forced fail for ${endpoint}`));
               }
-              return Promise.resolve({ data: [], error: null });
+              return Promise.resolve({ data: [] });
             });
 
             const { unmount } = render(<AllSections filter={FILTER} />);
@@ -206,8 +200,8 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
             // sections have necessarily settled too (they share the same
             // microtask queue and useEffect schedule).
             await waitFor(() => {
-              for (const { rpcName, displayName } of SECTIONS) {
-                if (!failingSet.has(rpcName)) continue;
+              for (const { endpoint, displayName } of SECTIONS) {
+                if (!failingSet.has(endpoint)) continue;
                 const matches = screen.queryAllByText(
                   sectionErrorRegex(displayName)
                 );
@@ -217,8 +211,8 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
 
             // Verify isolation: every NON-failing section must NOT show its
             // SectionError header. Since data=[], they render SectionEmpty.
-            for (const { rpcName, displayName } of SECTIONS) {
-              if (failingSet.has(rpcName)) continue;
+            for (const { endpoint, displayName } of SECTIONS) {
+              if (failingSet.has(endpoint)) continue;
               const matches = screen.queryAllByText(
                 sectionErrorRegex(displayName)
               );
@@ -227,8 +221,8 @@ describe('Analytics Sections — Property 6: Error isolation antar section', () 
 
             // And, for completeness, the failing sections each show exactly
             // one SectionError header (one per display name).
-            for (const { rpcName, displayName } of SECTIONS) {
-              if (!failingSet.has(rpcName)) continue;
+            for (const { endpoint, displayName } of SECTIONS) {
+              if (!failingSet.has(endpoint)) continue;
               const matches = screen.queryAllByText(
                 sectionErrorRegex(displayName)
               );

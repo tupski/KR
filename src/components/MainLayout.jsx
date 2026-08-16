@@ -2,7 +2,7 @@ import React from 'react';
 import { Outlet } from 'react-router-dom';
 import HeaderLayout from './HeaderLayout';
 import BottomNavigation from './BottomNavigation';
-import { useAuth } from '../contexts/SupabaseAuthContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const MainLayout = () => {
   const { user, userRole } = useAuth();

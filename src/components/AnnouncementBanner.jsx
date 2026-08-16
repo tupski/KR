@@ -1,14 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Megaphone, X } from 'lucide-react';
-import { supabase } from '@/lib/customSupabaseClient';
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { settingsApi } from '@/api/settings.api';
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 /**
  * AnnouncementBanner
  * Menampilkan pengumuman aktif terbaru di bagian atas layar.
  * - Satu banner per waktu (pengumuman paling baru)
  * - Bisa ditutup; state disimpan di sessionStorage (muncul lagi saat reload)
+ * 
+ * Note: Real-time subscriptions are not available with REST API.
+ * The banner will fetch announcements on mount and on window focus.
  */
 const AnnouncementBanner = () => {
   const [announcement, setAnnouncement] = useState(null);
@@ -16,46 +19,38 @@ const AnnouncementBanner = () => {
   const [showFullModal, setShowFullModal] = useState(false);
 
   const fetchAnnouncement = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('id, title, body, created_at')
-      .eq('type', 'announcement')
-      .eq('audience_role', 'all')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+    try {
+      // Use settingsApi to fetch announcements
+      const announcements = await settingsApi.listAnnouncements();
+      
+      // Filter for active announcements targeting 'all' audience
+      const activeAnnouncement = announcements?.data?.find(
+        a => a.type === 'announcement' && (a.audience_role === 'all' || !a.audience_role)
+      );
+      
+      if (!activeAnnouncement) return;
 
-    if (error || !data) return;
-
-    // Cek apakah sudah di-dismiss untuk notif ini di session ini
-    const dismissedId = sessionStorage.getItem('kr_dismissed_announcement');
-    if (dismissedId === String(data.id)) {
-      setDismissed(true);
-    } else {
-      setDismissed(false);
+      // Check if dismissed for this session
+      const dismissedId = sessionStorage.getItem('kr_dismissed_announcement');
+      if (dismissedId === String(activeAnnouncement.id)) {
+        setDismissed(true);
+      } else {
+        setDismissed(false);
+      }
+      setAnnouncement(activeAnnouncement);
+    } catch (error) {
+      console.error('Failed to fetch announcement:', error);
     }
-    setAnnouncement(data);
   }, []);
 
   useEffect(() => {
     fetchAnnouncement();
 
-    const channel = supabase
-      .channel('announcement-banner')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications' },
-        (payload) => {
-          if (payload.new?.type === 'announcement') {
-            setAnnouncement(payload.new);
-            setDismissed(false);
-            sessionStorage.removeItem('kr_dismissed_announcement');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
+    // Refresh on window focus since we don't have real-time subscriptions
+    const handleFocus = () => fetchAnnouncement();
+    window.addEventListener('focus', handleFocus);
+    
+    return () => window.removeEventListener('focus', handleFocus);
   }, [fetchAnnouncement]);
 
   const handleDismiss = () => {
@@ -67,7 +62,7 @@ const AnnouncementBanner = () => {
 
   const show = announcement && !dismissed;
 
-  // Hitung jumlah baris (estimasi: ~60 karakter per baris pada ukuran sm)
+  // Calculate line count (estimate: ~60 chars per line at sm size)
   const bodyLineCount = Math.ceil((announcement?.body?.length || 0) / 60);
   const isTruncated = bodyLineCount > 4;
 

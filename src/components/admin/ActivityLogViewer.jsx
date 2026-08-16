@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/customSupabaseClient';
-import { 
-  History, Search, Filter, Calendar, User, 
+import { activityLogsApi } from '@/api/activityLogs.api';
+import {
+  History, Search, Filter, Calendar, User,
   Activity, ArrowRight, Shield, RefreshCw
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -18,13 +18,7 @@ const ActivityLogViewer = () => {
   const fetchLogs = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('activity_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (error) throw error;
+      const data = await activityLogsApi.list({ limit: 100 });
       setLogs(data || []);
     } catch (error) {
       console.error(error);

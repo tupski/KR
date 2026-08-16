@@ -12,17 +12,14 @@ import { render, cleanup, waitFor } from '@testing-library/react';
 import * as fc from 'fast-check';
 
 // ---------------------------------------------------------------------------
-// Mock @/lib/customSupabaseClient — supabase.rpc('get_location_fullness', ...)
+// Mock @/api/client — api.get('/api/analytics/location-fullness', ...)
 // is controlled per fc iteration via mockResolvedValue.
 // ---------------------------------------------------------------------------
-vi.mock('@/lib/customSupabaseClient', () => {
-  const rpcMock = vi.fn();
-  return {
-    supabase: {
-      rpc: rpcMock,
-    },
-  };
-});
+vi.mock('@/api/client', () => ({
+  api: {
+    get: vi.fn(),
+  },
+}));
 
 // PaginationControls is not used by LocationFullnessSection (paginated: false),
 // but mock defensively to keep the rendered DOM minimal in case of future imports.
@@ -30,7 +27,7 @@ vi.mock('@/components/PaginationControls', () => ({ default: () => null }));
 
 // Import component AFTER mocks are set up.
 import LocationFullnessSection from './LocationFullnessSection';
-import { supabase } from '@/lib/customSupabaseClient';
+import { api } from '@/api/client';
 import { clearRpcCache } from '@/hooks/useRpcQuery';
 
 const FILTER = {
@@ -80,21 +77,21 @@ describe('LocationFullnessSection — Property 12: Occupancy rate NULL untuk lok
           async (rows) => {
             vi.clearAllMocks();
             clearRpcCache();
-            supabase.rpc.mockResolvedValue({ data: rows, error: null });
+            api.get.mockResolvedValue({ data: rows, error: null });
 
             const { container, unmount } = render(
               <LocationFullnessSection filter={FILTER} />
             );
 
-            // Wait until the table has rendered all rows from the RPC mock.
+            // Wait until the table has rendered all rows from the API mock.
             await waitFor(() => {
               const tbodyRows = container.querySelectorAll('tbody tr');
               expect(tbodyRows.length).toBe(rows.length);
             });
 
-            // Sanity check: the RPC was called with the expected name.
-            expect(supabase.rpc).toHaveBeenCalled();
-            expect(supabase.rpc.mock.calls[0][0]).toBe('get_location_fullness');
+            // Sanity check: the API was called with the expected endpoint.
+            expect(api.get).toHaveBeenCalled();
+            expect(api.get.mock.calls[0][0]).toBe('/api/analytics/location-fullness');
 
             // For every rendered row, columns 2 (Rata-rata Occupancy Rate)
             // and 3 (Peak Occupancy Rate) must display the literal "-".

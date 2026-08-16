@@ -17,8 +17,8 @@
  * (FormTransaksiModern, KaryawanTransaksi, DashboardPemasukan, OmsetChart,
  *  KetersediaanKamar, HalamanTagihan, HalamanRequest, SuperAdminDashboard,
  *  AnalyticsDashboard, NotificationsInbox, AccountSettings, KalenderLibur,
- *  AnnouncementBanner, ComposeAnnouncement, …) plus the SupabaseAuthContext,
- * the Supabase client, framer-motion timers, and Radix portals — all so we
+ *  AnnouncementBanner, ComposeAnnouncement, …) plus the AuthContext,
+ *  the REST API client, framer-motion timers, and Radix portals — all so we
  * can read back a tab list that is derived purely from `userRole`.
  *
  * Per the task's recommended alternative, this test instead replicates the

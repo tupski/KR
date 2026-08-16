@@ -12,42 +12,42 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import * as fc from 'fast-check';
 import { useRpcQuery, clearRpcCache } from './useRpcQuery';
 
-// Mock the supabase client module
-vi.mock('@/lib/customSupabaseClient', () => {
-  const rpcMock = vi.fn();
+// Mock the REST API client module
+vi.mock('@/api/client', () => {
+  const getMock = vi.fn();
   return {
-    supabase: {
-      rpc: rpcMock,
+    api: {
+      get: getMock,
     },
   };
 });
 
-import { supabase } from '@/lib/customSupabaseClient';
+import { api } from '@/api/client';
 
 // Large total_count so that any page 1–100 with any pageSize 1–100 is within totalPages
 // totalPages = ceil(total_count / pageSize) >= ceil(10000 / 100) = 100
 const LARGE_TOTAL_COUNT = 10000;
 
-describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke RPC', () => {
+describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke REST API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearRpcCache();
-    supabase.rpc.mockResolvedValue({
+    api.get.mockResolvedValue({
       data: [{ total_count: LARGE_TOTAL_COUNT }],
-      error: null,
+      pagination: { total: LARGE_TOTAL_COUNT, page: 1, limit: 10, totalPages: 1000 },
     });
   });
 
   /**
-   * Property 7: Pagination params dikirim dengan benar ke RPC
+   * Property 7: Pagination params dikirim dengan benar ke REST API
    *
    * For any currentPage (1–100) and pageSize (1–100), useRpcQuery SHALL call
-   * supabase.rpc() with p_limit = pageSize and p_offset = (currentPage - 1) * pageSize.
+   * api.get() with page and limit query params correctly.
    *
    * Validates: Requirements 4.4, 7.5, 8.5, 11.5, 12.4
    */
   it(
-    'Property 7: untuk sembarang currentPage dan pageSize, p_limit dan p_offset dikirim dengan benar ke RPC',
+    'Property 7: untuk sembarang currentPage dan pageSize, page dan limit dikirim dengan benar ke REST API',
     async () => {
       await fc.assert(
         fc.asyncProperty(
@@ -56,9 +56,9 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
           async (page, pageSize) => {
             vi.clearAllMocks();
             clearRpcCache();
-            supabase.rpc.mockResolvedValue({
+            api.get.mockResolvedValue({
               data: [{ total_count: LARGE_TOTAL_COUNT }],
-              error: null,
+              pagination: { total: LARGE_TOTAL_COUNT, page, limit: pageSize, totalPages: 1000 },
             });
 
             const { result, unmount } = renderHook(() =>
@@ -78,13 +78,13 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
 
             if (page === 1) {
               // Page 1 is the initial state — verify the initial fetch call
-              const calls = supabase.rpc.mock.calls;
+              const calls = api.get.mock.calls;
               expect(calls.length).toBeGreaterThan(0);
               const lastCall = calls[calls.length - 1];
-              expect(lastCall[0]).toBe('test_rpc');
+              expect(lastCall[0]).toBe('/api/analytics/test-rpc');
               expect(lastCall[1]).toMatchObject({
-                p_limit: pageSize,
-                p_offset: 0,
+                page: 1,
+                limit: pageSize,
               });
             } else {
               // Navigate to the target page
@@ -99,16 +99,15 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
                 expect(result.current.isLoading).toBe(false);
               });
 
-              // Verify the last RPC call used the correct pagination params
-              const calls = supabase.rpc.mock.calls;
+              // Verify the last API call used the correct pagination params
+              const calls = api.get.mock.calls;
               expect(calls.length).toBeGreaterThan(0);
               const lastCall = calls[calls.length - 1];
-              const expectedOffset = (page - 1) * pageSize;
 
-              expect(lastCall[0]).toBe('test_rpc');
+              expect(lastCall[0]).toBe('/api/analytics/test-rpc');
               expect(lastCall[1]).toMatchObject({
-                p_limit: pageSize,
-                p_offset: expectedOffset,
+                page: page,
+                limit: pageSize,
               });
             }
 
@@ -123,34 +122,34 @@ describe('useRpcQuery — Property 7: Pagination params dikirim dengan benar ke 
 });
 
 /**
- * Property 8: Filter params diteruskan ke RPC dengan benar
+ * Property 8: Filter params diteruskan ke REST API dengan benar
  *
  * Feature: analytics-dashboard
- * Property 8: Filter params diteruskan ke RPC dengan benar
+ * Property 8: Filter params diteruskan ke REST API dengan benar
  *
  * Validates: Requirements 4.5, 12.2, 12.5, 12.6
  */
-describe('useRpcQuery — Property 8: Filter params diteruskan ke RPC dengan benar', () => {
+describe('useRpcQuery — Property 8: Filter params diteruskan ke REST API dengan benar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearRpcCache();
-    supabase.rpc.mockResolvedValue({
+    api.get.mockResolvedValue({
       data: [],
-      error: null,
+      pagination: { total: 0, page: 1, limit: 10, totalPages: 0 },
     });
   });
 
   /**
-   * Property 8: Filter params diteruskan ke RPC dengan benar
+   * Property 8: Filter params diteruskan ke REST API dengan benar
    *
    * For any combination of appliedFilter (startDate, endDate, location including null),
-   * useRpcQuery SHALL call supabase.rpc() with p_start_date, p_end_date, and p_location
-   * matching the provided params exactly.
+   * useRpcQuery SHALL call api.get() with startDate, endDate, and location
+   * matching the provided params (normalized from p_* convention).
    *
    * Validates: Requirements 4.5, 12.2, 12.5, 12.6
    */
   it(
-    'Property 8: untuk sembarang kombinasi filter params, p_start_date, p_end_date, dan p_location diteruskan ke RPC dengan benar',
+    'Property 8: untuk sembarang kombinasi filter params, startDate, endDate, dan location diteruskan ke REST API dengan benar',
     async () => {
       await fc.assert(
         fc.asyncProperty(
@@ -162,9 +161,9 @@ describe('useRpcQuery — Property 8: Filter params diteruskan ke RPC dengan ben
           async ({ p_start_date, p_end_date, p_location }) => {
             vi.clearAllMocks();
             clearRpcCache();
-            supabase.rpc.mockResolvedValue({
+            api.get.mockResolvedValue({
               data: [],
-              error: null,
+              pagination: { total: 0, page: 1, limit: 10, totalPages: 0 },
             });
 
             const params = { p_start_date, p_end_date, p_location };
@@ -184,16 +183,17 @@ describe('useRpcQuery — Property 8: Filter params diteruskan ke RPC dengan ben
               expect(result.current.isLoading).toBe(false);
             });
 
-            // Verify supabase.rpc was called with the correct filter params
-            const calls = supabase.rpc.mock.calls;
+            // Verify api.get was called with the correct filter params
+            const calls = api.get.mock.calls;
             expect(calls.length).toBeGreaterThan(0);
             const lastCall = calls[calls.length - 1];
 
-            expect(lastCall[0]).toBe('test_rpc');
+            expect(lastCall[0]).toBe('/api/analytics/test-rpc');
+            // Params are normalized from p_* to camelCase
             expect(lastCall[1]).toMatchObject({
-              p_start_date,
-              p_end_date,
-              p_location,
+              startDate: p_start_date,
+              endDate: p_end_date,
+              location: p_location,
             });
 
             unmount();

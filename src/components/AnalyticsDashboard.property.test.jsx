@@ -23,14 +23,11 @@ import {
 } from 'date-fns';
 
 // ---------------------------------------------------------------------------
-// Mock @/lib/customSupabaseClient to prevent actual Supabase calls
+// Mock @/api/client to prevent actual REST API calls
 // ---------------------------------------------------------------------------
-vi.mock('@/lib/customSupabaseClient', () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      select: vi.fn(() => Promise.resolve({ data: [], error: null })),
-    })),
-    rpc: vi.fn(() => Promise.resolve({ data: [], error: null })),
+vi.mock('@/api/client', () => ({
+  api: {
+    get: vi.fn(() => Promise.resolve({ data: [], error: null })),
   },
 }));
 
