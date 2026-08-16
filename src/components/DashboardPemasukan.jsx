@@ -150,7 +150,7 @@ const DashboardPemasukan = () => {
       const to = from + ITEMS_PER_PAGE - 1;
       let listQuery = supabase
         .from('transactions')
-        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, payment_method, category, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, receipt_url')
+        .select('id, checkin_at, created_at, checkout_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, transfer_to, deposit_cash, deposit_transfer, deposit_returned_at, marketing_fee, ktp_image_url, transfer_proof_url')
         .or(dateOr)
         .order('checkin_at', { ascending: false, nullsFirst: false })
         .range(from, to);
