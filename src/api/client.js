@@ -4,6 +4,8 @@
  * All API modules import from this file.
  */
 
+import { unwrapEnvelope } from '../lib/unwrapEnvelope.js';
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
 // ── Token storage ────────────────────────────────────────────────────────────
@@ -55,6 +57,18 @@ async function refreshAccessToken() {
   }
 }
 
+// ── Response parsing ─────────────────────────────────────────────────────────
+
+/**
+ * Parse JSON body, unwrapping a `{ data }` envelope only when `data` is the
+ * sole key. Preserves paginated shapes like `{ data, total, page, limit }`.
+ * @param {Response} res
+ * @returns {Promise<any>}
+ */
+export async function parseJsonBody(res) {
+  return unwrapEnvelope(await res.json());
+}
+
 // ── Core fetch wrapper ───────────────────────────────────────────────────────
 
 /**
@@ -96,7 +110,7 @@ export async function apiFetch(path, options = {}) {
         throw new Error(errBody.message || `HTTP ${retryRes.status}`);
       }
 
-      return retryRes.json();
+      return parseJsonBody(retryRes);
     } catch {
       // Refresh failed — force logout
       tokenStorage.clear();
@@ -113,7 +127,7 @@ export async function apiFetch(path, options = {}) {
   // 204 No Content
   if (res.status === 204) return null;
 
-  return res.json();
+  return parseJsonBody(res);
 }
 
 // ── Typed helpers ────────────────────────────────────────────────────────────

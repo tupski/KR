@@ -62,10 +62,10 @@ const LocationRoomManager = () => {
         locationsApi.listRoomsWithOccupancy({})
       ]);
 
-      setLocations(locRes?.data || []);
+      setLocations(locRes || []);
       
       // Flatten rooms from all locations
-      const allRooms = roomsRes?.data || [];
+      const allRooms = roomsRes?.rooms || [];
       setRooms(allRooms);
       
       // Calculate active transactions from room occupancy data

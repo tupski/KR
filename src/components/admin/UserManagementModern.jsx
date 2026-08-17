@@ -84,7 +84,7 @@ const UserManagementModern = () => {
       // Filter out super_admin from the list
       const profiles = usersRes?.data?.filter(u => u.role !== 'super_admin') || [];
       setUsers(profiles);
-      setLocations(locsRes?.data || []);
+      setLocations(locsRes || []);
       
       // Fetch assignments for each user
       // Note: This could be optimized with a single endpoint

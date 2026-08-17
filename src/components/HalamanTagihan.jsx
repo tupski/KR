@@ -277,7 +277,7 @@ const TagihanBulanan = ({ onDataUpdate }) => {
       const lokasiData = await locationsApi.list();
       if (lokasiData) setLokasiOptions(lokasiData.map(l => l.name));
       const kamarData = await locationsApi.listRoomsWithOccupancy();
-      if (kamarData) setTagihanKamarOptions(kamarData);
+      if (kamarData) setTagihanKamarOptions(kamarData.rooms || []);
     } catch (error) {
       console.error('Failed to fetch options:', error);
     }
@@ -1470,7 +1470,7 @@ const PengeluaranUnit = ({ onDataUpdate }) => {
       if (lokasiData) setLokasiOptions(lokasiData.map(l => l.name));
 
       const kamarData = await locationsApi.listRoomsWithOccupancy();
-      if (kamarData) setKamarOptions(kamarData);
+      if (kamarData) setKamarOptions(kamarData.rooms || []);
     } catch (error) {
       console.error('Failed to load options:', error);
     }
@@ -1807,7 +1807,7 @@ const Pengeluaran = ({ onDataUpdate }) => {
       if (lokasiData) setLokasiOptions(lokasiData.map(l => l.name));
 
       const kamarData = await locationsApi.listRoomsWithOccupancy();
-      if (kamarData) setKamarOptions(kamarData);
+      if (kamarData) setKamarOptions(kamarData.rooms || []);
     } catch (error) {
       console.error('Failed to load options:', error);
     }

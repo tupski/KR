@@ -42,13 +42,13 @@ const SuperAdminDashboard = () => {
 
       // Calculate total rooms from locations
       let totalRooms = 0;
-      if (locationsRes?.data) {
-        totalRooms = locationsRes.data.reduce((acc, loc) => acc + (loc.room_count || 0), 0);
+      if (locationsRes) {
+        totalRooms = locationsRes.reduce((acc, loc) => acc + (loc.room_count || 0), 0);
       }
 
       setStats({
         totalUsers: usersRes?.data?.length || 0,
-        totalLocations: locationsRes?.data?.length || 0,
+        totalLocations: locationsRes?.length || 0,
         totalRooms,
         recentLogs: logsRes?.data || []
       });

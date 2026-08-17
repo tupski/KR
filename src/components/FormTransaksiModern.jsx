@@ -204,11 +204,11 @@ const FormTransaksiModern = ({
 
         // Transform data to match expected format
         const lokasi = (lokasiData || []).map(item => ({ name: item.name || item }));
-        const kamar = (kamarData || []).map(item => ({ name: item.room_number, lokasi: item.location }));
-        const marketing = (marketingData || []).map(item => ({ name: item.name }));
-        const karyawan = (karyawanData || []).map(item => ({ name: item.name }));
+        const kamar = ((kamarData?.rooms) || []).map(item => ({ name: item.name, lokasi: item.lokasi }));
+        const marketing = ((marketingData?.data) || []).map(item => ({ name: item.name }));
+        const karyawan = ((karyawanData?.data) || []).map(item => ({ name: item.name }));
         const roomTransactions = roomTransactionsData || [];
-        const assignments = (assignmentsData || []).map(item => ({ location_name: item.location_name || item }));
+        const assignments = ((assignmentsData?.locations) || []).map(item => ({ location_name: item.location_name || item }));
 
         let filteredLokasi = lokasi || [];
         let filteredKamar = kamar || [];
@@ -538,7 +538,7 @@ const FormTransaksiModern = ({
               try {
                 // Find marketing user and delete via API
                 const marketingUsers = await usersApi.list({ role: 'marketing', search: formData.namaMarketing });
-                const marketingToDelete = marketingUsers?.find(u => u.name === formData.namaMarketing);
+                const marketingToDelete = marketingUsers?.data?.find(u => u.name === formData.namaMarketing);
                 if (marketingToDelete) {
                   await usersApi.delete(marketingToDelete.id);
                 }
@@ -710,7 +710,7 @@ const FormTransaksiModern = ({
                         try {
                           // Find karyawan user and delete via API
                           const karyawanUsers = await usersApi.list({ role: 'karyawan', search: formData.input_by });
-                          const karyawanToDelete = karyawanUsers?.find(u => u.name === formData.input_by);
+                          const karyawanToDelete = karyawanUsers?.data?.find(u => u.name === formData.input_by);
                           if (karyawanToDelete) {
                             await usersApi.delete(karyawanToDelete.id);
                           }

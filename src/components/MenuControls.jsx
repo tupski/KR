@@ -65,7 +65,7 @@ const MenuControls = () => {
     try {
       // Get unique roles from users via API
       const users = await usersApi.list();
-      const profileRoles = [...new Set((users || []).map(item => item.role).filter(Boolean))];
+      const profileRoles = [...new Set((users?.data || []).map(item => item.role).filter(Boolean))];
       const mergedRoles = [...new Set([...fallbackRoles, ...profileRoles])];
       setUserRoles(mergedRoles);
     } catch (error) {

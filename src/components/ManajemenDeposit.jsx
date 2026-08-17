@@ -126,14 +126,15 @@ const ManajemenDeposit = () => {
     }
     const loaded = async () => {
       try {
-        // Fetch rooms via locations API
+        // Fetch rooms via locations API (returns { rooms, transactions, paidFees })
         const data = await locationsApi.listRoomsWithOccupancy();
+        const rooms = data?.rooms || [];
         // Filter by selected locations if any
         const filtered = selectedLocations.length > 0
-          ? (data || []).filter(r => selectedLocations.includes(r.location))
-          : (data || []);
+          ? rooms.filter(r => selectedLocations.includes(r.lokasi))
+          : rooms;
         // Transform to expected format { name, lokasi }
-        const roomsData = filtered.map(r => ({ name: r.room_number, lokasi: r.location }));
+        const roomsData = filtered.map(r => ({ name: r.name, lokasi: r.lokasi }));
         setRooms(roomsData);
       } catch (err) {
         console.error('Error loading rooms:', err);

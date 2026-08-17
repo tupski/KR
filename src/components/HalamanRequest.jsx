@@ -36,7 +36,7 @@ const HalamanRequest = () => {
     const fetchOptions = async () => {
         try {
             const lokasiData = await locationsApi.list();
-            if (lokasiData?.data) setLokasiOptions(lokasiData.data.map(l => l.name));
+            if (lokasiData) setLokasiOptions(lokasiData.map(l => l.name));
             // Note: karyawan_list is deprecated; employee names come from user_profiles
             // Keeping the state for backward compatibility if needed
         } catch (err) {

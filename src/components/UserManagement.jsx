@@ -68,7 +68,7 @@ const UserManagement = () => {
     try {
       setLoading(true);
       const profiles = await usersApi.list();
-      setUsers(profiles || []);
+      setUsers(profiles?.data || []);
     } catch (error) {
       console.error('Error fetching users:', error);
       toast.error('Gagal memuat data karyawan');

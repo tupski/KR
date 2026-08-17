@@ -57,12 +57,12 @@ const AutocompleteInput = ({ type, value, onValueChange, location }) => {
           setListItems((data || []).map(item => ({ name: item.name || item })));
         } else if (type === 'rooms') {
           const data = await locationsApi.listRoomsWithOccupancy({ location });
-          // Rooms API returns array with room_number field
-          setListItems((data || []).map(item => ({ name: item.room_number })));
+          // Rooms API returns { rooms, transactions, paidFees }
+          setListItems(((data?.rooms) || []).map(item => ({ name: item.name })));
         } else if (type === 'marketing') {
           const data = await usersApi.list({ role: 'marketing' });
-          // Users API returns array with name field
-          setListItems((data || []).map(item => ({ name: item.name })));
+          // Users API returns { data, total, page, limit }
+          setListItems(((data?.data) || []).map(item => ({ name: item.name })));
         }
       } catch (err) {
         console.error(`Error fetching ${type}:`, err);

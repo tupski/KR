@@ -70,7 +70,9 @@ async function login(req, res, next) {
     await authService.createSession({
       userId:      user.id,
       refreshToken,
-      deviceInfo:  req.headers['user-agent'] ?? null,
+      deviceInfo:  req.headers['user-agent']
+        ? { userAgent: req.headers['user-agent'] }
+        : {},
       expiresAt:   refreshExpiresAt,
     });
 
