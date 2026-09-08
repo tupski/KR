@@ -5,8 +5,6 @@ import '@/index.css';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/contexts/SupabaseAuthContext';
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/react';
 import { checkAppUpdate } from '@/utils/checkAppUpdate';
 
 // Cek update aplikasi setelah render — jangan block render & jangan clear storage saat startup
@@ -15,13 +13,14 @@ setTimeout(() => {
   checkAppUpdate({ clearStorage: false });
 }, 5000);
 
+// Telemetry Vercel (Analytics/SpeedInsights) dihapus: tidak berfungsi di luar
+// platform Vercel dan merupakan dependency runtime Vercel. Untuk observability
+// self-hosted gunakan access log Fastify + /health endpoint.
 ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <AuthProvider>
       <App />
       <Toaster />
-      <Analytics />
-      <SpeedInsights />
     </AuthProvider>
   </BrowserRouter>
 );
