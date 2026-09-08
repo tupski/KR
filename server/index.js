@@ -7,8 +7,13 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import fastifyMultipart from '@fastify/multipart';
+import fastifyJwt from '@fastify/jwt';
+import fastifyCookie from '@fastify/cookie';
 import dotenv from 'dotenv';
 import { getStorageDriver, sanitizeStorageKey, toCanonicalKey } from './storage/index.js';
+import authRoutes from './routes/auth.js';
+import apiRoutes from './routes/api.js';
+import { checkDbHealth } from './db/index.js';
 
 dotenv.config();
 
@@ -17,6 +22,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const STORAGE_PATH = process.env.LOCAL_STORAGE_PATH || path.resolve(process.cwd(), 'storage');
 const DIST_PATH = path.resolve(process.cwd(), 'dist');
+const JWT_SECRET = process.env.JWT_SECRET || 'kr-app-super-secret-jwt-key-2026';
 
 const fastify = Fastify({
   logger: {
@@ -39,7 +45,17 @@ const fastify = Fastify({
 
 await fastify.register(fastifyCors, {
   origin: true,
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+});
+
+await fastify.register(fastifyCookie);
+await fastify.register(fastifyJwt, {
+  secret: JWT_SECRET,
+  cookie: {
+    cookieName: 'token',
+    signed: false,
+  },
 });
 
 await fastify.register(fastifyMultipart, {
@@ -47,6 +63,10 @@ await fastify.register(fastifyMultipart, {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
 });
+
+// Register Business API & Auth Routes
+await fastify.register(authRoutes);
+await fastify.register(apiRoutes);
 
 // Storage static serving
 await fastify.register(fastifyStatic, {
@@ -58,6 +78,12 @@ await fastify.register(fastifyStatic, {
 // Health endpoints
 fastify.get('/health', async (_req, reply) => {
   return reply.send({ status: 'ok', uptime: process.uptime() });
+});
+
+fastify.get('/health/db', async (_req, reply) => {
+  const healthy = await checkDbHealth();
+  if (healthy) return reply.send({ status: 'ok', database: 'connected' });
+  return reply.code(503).send({ status: 'error', database: 'disconnected' });
 });
 
 // Legacy /api/blob proxy endpoint
@@ -99,7 +125,6 @@ fastify.post('/api/upload', async (req, reply) => {
     } else {
       buffer = await req.body;
       if (!buffer || buffer.length === 0) {
-        // Fallback read stream jika raw buffer
         const chunks = [];
         for await (const chunk of req.raw) {
           chunks.push(chunk);
