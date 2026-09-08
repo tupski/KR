@@ -1,22 +1,38 @@
+# KR App — production stack (aaPanel / any Docker host)
+#
+# Semua variabel (termasuk rahasia) dibaca dari file .env melalui env_file —
+# tidak ada interpolasi rahasia di dalam YAML ini.
+# .env TIDAK pernah di-commit. Lihat .env.example untuk daftar lengkap.
+#
+# Catatan Docker: DATABASE_URL di .env harus menunjuk host `postgres`
+# (nama service di jaringan internal), contoh:
+#   DATABASE_URL=postgresql://kr_user:***@postgres:5432/kr_production
+
 services:
   postgres:
-    image: postgres:16-alpine
+    # PostgreSQL 17 — menyamai server sumber Supabase (17.6.1 menurut
+    # supabase/.temp/postgres-version). Restore dump lintas major version ke
+    # bawah tidak didukung PostgreSQL; target harus >= major sumber.
+    image: postgres:17-alpine
     container_name: kr-postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-kr_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kr_secure_password_2026}
-      POSTGRES_DB: ${POSTGRES_DB:-kr_production}
+    # Image postgres membaca POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+    # langsung dari environment (diisi via env_file).
+    env_file:
+      - .env
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # Tidak ada published port: hanya terjangkau app via jaringan internal.
     networks:
-      - kr-network
+      - kr-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kr_user} -d ${POSTGRES_DB:-kr_production}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
 
   app:
     build:
@@ -25,24 +41,32 @@ services:
     container_name: kr-app
     restart: unless-stopped
     ports:
+      # Loopback saja; Nginx aaPanel reverse-proxy 443 -> 127.0.0.1:3000
       - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
     environment:
+      # Konstanta runtime (bukan rahasia) — menimpa nilai .env bila ada.
       NODE_ENV: production
-      PORT: 3000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-kr_user}:${POSTGRES_PASSWORD:-kr_secure_password_2026}@postgres:5432/${POSTGRES_DB:-kr_production}
-      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      PORT: "3000"
+      HOST: 0.0.0.0
       LOCAL_STORAGE_PATH: /app/storage
-      JWT_SECRET: ${JWT_SECRET:-please_change_this_jwt_secret_in_production}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@kakaramaroom.com}
     volumes:
+      # Media persisten di luar container; recreate kr-app tidak menghapusnya.
       - storage_data:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
     networks:
-      - kr-network
+      - kr-internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   pgdata:
@@ -51,6 +75,6 @@ volumes:
     name: kr_storage
 
 networks:
-  kr-network:
+  kr-internal:
     name: kr_network
     driver: bridge

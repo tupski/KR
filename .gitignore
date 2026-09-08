@@ -108,5 +108,9 @@ migration/
 *.jsonl
 !supabase/**/*.sql
 !server/db/schema.sql
+!server/db/prepare-target.sql
+
+# Local storage (runtime data, mounted as Docker volume) — root only
+/storage/
 
 coding-agent-docs/

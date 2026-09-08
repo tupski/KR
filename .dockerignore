@@ -1,0 +1,41 @@
+# Keep the build context minimal and secret-free.
+.git
+.github
+.vercel
+.vscode
+.idea
+.agents
+.cursor
+.continue
+.kiro
+.roo
+.clinerules
+.freebuff
+node_modules
+dist
+coverage
+*.log
+
+# Secrets & local env — NEVER bake into image
+.env
+.env.*
+!.env.example
+
+# Migration artifacts & database dumps
+migration/
+*.dump
+*.sql.gz
+26052026-backup-complete.sql
+sb-backups/
+**/backup/
+
+# Local storage (mounted as volume at runtime)
+storage/
+
+# Dev-only directories not needed at runtime
+docs/
+supabase/
+plugins/
+telemetry-*.json
+auth.json
+config.json
