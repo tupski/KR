@@ -98,4 +98,14 @@ spec/
 .roomodes
 agent_skills_spec.md
 ARCHITECTURE.md
+
+# =============================================================
+# Migration tooling artifacts — DO NOT COMMIT
+# =============================================================
+migration/
+*.dump
+*.sql
+*.jsonl
+!supabase/**/*.sql
+
 coding-agent-docs/

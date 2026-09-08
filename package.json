@@ -9,7 +9,10 @@
     "preview": "vite preview --host :: --port 3000",
     "lint": "eslint . --quiet",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migration:db": "node tools/migrate-supabase-db.js",
+    "migration:blob": "node tools/migrate-vercel-blob.js",
+    "migration:verify": "node tools/verify-migration.js"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.3.1",
