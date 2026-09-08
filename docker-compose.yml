@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kr_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kr_secure_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-kr_production}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - kr-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kr_user} -d ${POSTGRES_DB:-kr_production}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kr-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kr_user}:${POSTGRES_PASSWORD:-kr_secure_password_2026}@postgres:5432/${POSTGRES_DB:-kr_production}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      LOCAL_STORAGE_PATH: /app/storage
+      JWT_SECRET: ${JWT_SECRET:-please_change_this_jwt_secret_in_production}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@kakaramaroom.com}
+    volumes:
+      - storage_data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kr-network
+
+volumes:
+  pgdata:
+    name: kr_pgdata
+  storage_data:
+    name: kr_storage
+
+networks:
+  kr-network:
+    name: kr_network
+    driver: bridge

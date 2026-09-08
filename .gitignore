@@ -107,5 +107,6 @@ migration/
 *.sql
 *.jsonl
 !supabase/**/*.sql
+!server/db/schema.sql
 
 coding-agent-docs/
