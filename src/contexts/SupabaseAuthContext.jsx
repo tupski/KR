@@ -147,6 +147,14 @@ export const AuthProvider = ({ children }) => {
   }, [user?.id, checkUserRole]);
 
   const signUp = useCallback(async (email, password, options) => {
+    // Native mode: backend self-hosted tidak punya public signup (hanya
+    // /api/auth/register khusus admin). createNativeSupabaseCompat juga sudah
+    // mengembalikan error yang sama; guard eksplisit agar pesan konsisten.
+    if (supabase.isNativeCompat) {
+      const nativeError = { message: 'Pendaftaran harus melalui admin.' };
+      toast({ variant: 'destructive', title: 'Sign up Failed', description: nativeError.message });
+      return { error: nativeError };
+    }
     const { error } = await supabase.auth.signUp({ email, password, options });
     if (error) {
       toast({ variant: 'destructive', title: 'Sign up Failed', description: error.message || 'Something went wrong' });

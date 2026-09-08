@@ -162,7 +162,11 @@ export default async function authRoutes(fastify, _opts) {
     }
 
     // Role dari body hanya dihormati untuk admin yang terautentikasi.
-    const effectiveRole = allowPublic ? 'karyawan' : (['karyawan', 'admin', 'super_admin'].includes(role) ? role : 'karyawan');
+    // Privilege boundary: 'admin' TIDAK BOLEH membuat 'super_admin' — itu
+    // terbatas pada RPC admin_create_user (super_admin-only, SECURITY DEFINER).
+    const effectiveRole = allowPublic
+      ? 'karyawan'
+      : (['karyawan', 'admin'].includes(role) ? role : 'karyawan');
 
     try {
       const { createUser } = await import('../services/auth.js');

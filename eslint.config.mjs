@@ -4,7 +4,7 @@ import importPlugin from 'eslint-plugin-import';
 import globals from 'globals';
 
 export default [
-	{ ignores: ['node_modules/**', 'dist/**', 'build/**', 'vite.config.js'] },
+	{ ignores: ['node_modules/**', 'dist/**', 'build/**', 'vite.config.js', '.roo/**', '.agents/**', '.continue/**', '.clinerules/**', '.cursor/**', '.kiro/**', 'plugins/**'] },
 	{
 		files: ['**/*.js', '**/*.jsx'],
 		plugins: { react, 'react-hooks': reactHooks, import: importPlugin },
@@ -49,5 +49,6 @@ export default [
 			'import/no-cycle': 'off', // AI rarely makes this error, and the rule is very slow to run
 		},
 	},
-	{ files: ['tools/**/*.js', 'tailwind.config.js'], languageOptions: { globals: globals.node } },
+	{ files: ['tools/**/*.js', 'server/**/*.js', 'tests/**/*.js', 'tailwind.config.js'], languageOptions: { globals: { ...globals.node, Buffer: 'readonly' } } },
+	{ files: ['src/lib/nativeClient.js'], languageOptions: { globals: globals.node } },
 ];

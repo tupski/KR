@@ -114,3 +114,5 @@ migration/
 /storage/
 
 coding-agent-docs/
+# Local tool state (never commit)
+.freebuff/

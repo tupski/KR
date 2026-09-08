@@ -5,6 +5,7 @@ import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/lib/customSupabaseClient';
+import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { resolveStorageUrl } from '@/lib/storageUrl';
 import Select from 'react-select';
 import { Image as ImageIcon } from 'lucide-react';
@@ -309,12 +310,9 @@ const ManajemenDeposit = () => {
 
     try {
       if (fileBukti) {
-        const fileExt = fileBukti.name.split('.').pop();
-        const fileName = `refund-${selectedTx.id}-${Date.now()}.${fileExt}`;
-        const filePath = `refund_proofs/${fileName}`;
-        const { error: uploadError } = await supabase.storage.from('transaction_receipts').upload(filePath, fileBukti);
-        if (uploadError) throw uploadError;
-        proofUrl = filePath;
+        // Self-hosted: /api/upload (authenticated, server-side key generation).
+        // Legacy `supabase.storage.from(...).upload()` has no native shim.
+        proofUrl = await uploadToVercelBlob(fileBukti, 'refund_proofs');
       }
 
       const { error } = await supabase

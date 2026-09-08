@@ -1,35 +1,41 @@
 # Prosedur Cutover & Kesiapan Migrasi Produksi (KR App)
 
 ## 1. Ikhtisar & Prinsip Keamanan
-Dokumen ini mengatur urutan langkah manual untuk mengeksekusi migrasi produksi dari infrastruktur Vercel + Supabase ke infrastruktur Self-Hosted aaPanel (Node.js 24 + PostgreSQL 16 + Local Storage).
+Dokumen ini mengatur urutan langkah manual untuk mengeksekusi migrasi produksi dari infrastruktur Vercel + Supabase ke infrastruktur Self-Hosted aaPanel (Node.js 24 + PostgreSQL 17 + Local Storage).
 
 > **Prinsip:**
 > - Non-destructive: Infrastruktur lama tidak dihapus selama proses.
 > - Data correctness > Zero-downtime.
 > - Pembatalan (Rollback) dapat dilakukan kapan saja sebelum DNS A-Record dipindah penuh.
+> - **Verifikasi nyata setiap langkah** — jangan lanjut hanya karena command exit 0.
 
 ---
 
-## 2. Urutan Eksekusi Cutover (16 Langkah)
+## 2. Urutan Eksekusi Cutover (17 Langkah)
 
 ```text
-1. Backup Supabase PostgreSQL
-2. Pre-copy Vercel Blob ke Target Storage
-3. Deploy Infrastruktur Target di aaPanel (docker compose up -d)
-4. Ekspor Dump Akhir Supabase (npm run migration:db -- export)
-5. Restore ke Database Target (npm run migration:db -- restore)
-6. Verifikasi Integritas Database Target (npm run migration:db -- verify)
-7. Final Sync Vercel Blob (npm run migration:blob -- migrate)
-8. Transformasi URL Media Legacy (Ubah URL Vercel ke Key Canonical)
-9. Verifikasi Aset Media (npm run migration:verify)
-10. Smoke Test Aplikasi Target pada Domain Staging / IP Server
-11. Aktifkan Maintenance Mode pada Vercel Lama (Opsional)
-12. Alihkan DNS A-Record Domain ke IP Server aaPanel
-13. Terbitkan Sertifikat SSL Let's Encrypt di aaPanel Nginx
-14. Pantau Log Aplikasi (docker compose logs -f app)
-15. Evaluasi Kestabilan (Masa Retensi 14-30 Hari)
-16. Decommissioning Infrastruktur Lama (Secara Manual)
+0. Backup & VERIFIKASI Supabase (pg_dump + test restore di tempat staging)
+1. Pre-copy Vercel Blob ke Target Storage
+2. Deploy Infrastruktur Target di aaPanel (docker compose up -d)
+3. Ekspor Dump Akhir Supabase (npm run migration:db -- export)
+4. Restore ke Database Target (npm run migration:db -- restore)
+5. Verifikasi Integritas Database Target (npm run migration:db -- verify)
+6. Final Sync Vercel Blob (npm run migration:blob -- migrate)
+7. Transformasi URL Media Legacy (Ubah URL Vercel ke Key Canonical)
+8. Verifikasi Aset Media (npm run migration:verify)
+9. Smoke Test Aplikasi Target pada Domain Staging / IP Server
+10. Aktifkan Maintenance Mode pada Vercel Lama (Opsional)
+11. Alihkan DNS A-Record Domain ke IP Server aaPanel
+12. Terbitkan Sertifikat SSL Let's Encrypt di aaPanel Nginx
+13. Pantau Log Aplikasi (docker compose logs -f app)
+14. Evaluasi Kestabilan (Masa Retensi 14-30 Hari)
+15. Decommissioning Infrastruktur Lama (Secara Manual)
 ```
+
+### Prasyarat wajib sebelum mulai
+- Image dibangun dengan `VITE_API_MODE=native` (Dockerfile default; jangan override ke supabase).
+- Server berisi commit yang memuat `runAsActor` (GUC `request.jwt.*`) — TANPA itu, RLS pasca-restore menolak semua query & RPC SECURITY DEFINER (admin_*, pay_*, log_activity) gagal.
+- `DATABASE_URL`, `JWT_SECRET`, `APP_URL`, `COOKIE_SECURE=true` sudah benar di `.env`.
 
 ---
 
@@ -67,7 +73,22 @@ npm run migration:verify
 ---
 
 ## 4. Rencana Pembatalan (Rollback Strategy)
-Jika ditemukan kegagalan kritis pada server baru sebelum DNS menyebar penuh:
+Rollback **bukan zero-loss** setelah server baru menerima write. Bedakan:
+
+| Jenis | Mekanisme | Proteksi |
+|---|---|---|
+| **Traffic rollback** | Balik DNS A-record ke Vercel CNAME | Instan — Vercel + Supabase lama masih utuh |
+| **Application rollback** | `docker compose down` di aaPanel | Menghentikan layanan baru |
+| **Database rollback** | Kembali ke Supabase | Hanya aman jika belum ada write baru di server baru |
+| **Media rollback** | Objek baru di storage self-hosted | Perlu disalin manual balik ke Vercel Blob |
+
+**Jika server baru telah menerima transaksi/notifikasi baru selama masa uji (pasca cutover sebagian):**
+1. Balikkan DNS dulu (traffic kembali ke Vercel).
+2. Ekspor data baru dari PostgreSQL self-hosted (`pg_dump` tabel yang berubah: transactions, tagihan_*, pengeluaran, requests, notifications, user_roles).
+3. Lakukan sync manual / delta ke Supabase.
+4. **Jangan matikan** PostgreSQL self-hosted sampai delta terverifikasi.
+
+Jika ditemukan kegagalan kritis pada server baru **sebelum** DNS menyebar penuh:
 1. Kembalikan DNS A-Record atau CNAME pada DNS Manager (Cloudflare / Registrar) mengarah kembali ke Vercel CNAME (`cname.vercel-dns.com`).
 2. Aplikasi Vercel & Supabase asli yang tetap utuh akan langsung menerima traffic kembali.
 3. *Catatan Pasca-Cutover:* Jika server baru telah menerima transaksi baru selama masa pengujian, lakukan penyesuaian/export delta manual pada data transaksi baru sebelum mematikan server baru.

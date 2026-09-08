@@ -12,7 +12,12 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-# Build-time only public vars may be passed via --build-arg; no secrets here.
+# Build-time public vars for the SPA. VITE_API_MODE must default to 'native'
+# for the self-hosted build — the image has no .env (dockerignore) and the
+# legacy Supabase path throws when VITE_SUPABASE_URL is absent.
+ARG VITE_API_MODE=native
+ENV VITE_API_MODE=${VITE_API_MODE}
+# Run npm run build
 RUN npm run build
 
 # ── Stage 2: install production dependencies ─────────────────────────────────

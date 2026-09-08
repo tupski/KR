@@ -80,6 +80,7 @@ describe('GlobalFilterBar — Property 3: Nilai default filter sesuai tanggal re
           fc.date({
             min: new Date('2020-01-01T00:00:00.000Z'),
             max: new Date('2030-12-31T23:59:59.999Z'),
+            noInvalidDate: true,
           }),
           async (T) => {
             // Pin system time to T BEFORE rendering so the useState initialisers
@@ -272,6 +273,7 @@ describe('GlobalFilterBar — Property 5: Tombol preset filter menghasilkan rent
           fc.date({
             min: new Date('2020-01-01T00:00:00.000Z'),
             max: new Date('2030-12-31T23:59:59.999Z'),
+            noInvalidDate: true,
           }),
           async (T) => {
             // Pin system time to T BEFORE rendering so preset handlers
