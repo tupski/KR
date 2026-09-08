@@ -2,8 +2,13 @@
 /* global process */
 
 import { query } from '../db/index.js';
+import { authenticate } from '../middleware/auth.js';
 
 export default async function apiRoutes(fastify, _opts) {
+  // Semua route di bawah ini mengembalikan data bisnis (transaksi, keuangan,
+  // master data, pengaturan) -> WAJIB terautentikasi.
+  fastify.addHook('preHandler', authenticate);
+
   // GET /api/transactions
   fastify.get('/api/transactions', async (req, reply) => {
     try {

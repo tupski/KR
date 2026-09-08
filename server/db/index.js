@@ -35,3 +35,7 @@ export async function checkDbHealth() {
     return false;
   }
 }
+
+export async function closePool() {
+  await pool.end().catch(() => {});
+}
