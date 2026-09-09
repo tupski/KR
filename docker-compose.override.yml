@@ -1,0 +1,8 @@
+# OVERRIDE LOKAL (test/migrasi saja): expose Postgres ke loopback host
+# supaya tools migrasi (pg_dump/psql via migration:db) bisa akses target dari host.
+# JANGAN commit. JANGAN pakai override ini di produksi (aaPanel) — di produksi
+# Postgres tetap internal-only.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
