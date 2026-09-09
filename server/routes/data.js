@@ -19,32 +19,23 @@
 import { query, runAsActor } from '../db/index.js';
 import { createRepository, PolicyError } from '../db/repository.js';
 import { getRpcPolicy, RPC_POLICIES } from '../db/policy.js';
+import { authenticate } from '../middleware/auth.js';
 
 const repository = createRepository((text, params) => query(text, params), runAsActor);
 
 const QUERY_OPS = new Set(['select', 'insert', 'update', 'delete', 'upsert']);
 
+/**
+ * Actor from req.authUser (set by middleware/auth.authenticate): role is
+ * re-resolved from the DB on every request, NEVER taken from the JWT payload
+ * (a stale/missing role claim must not grant privilege).
+ */
 function resolveActor(req) {
-  const payload = req.user || {};
+  const authUser = req.authUser || {};
   return {
-    userId: payload.sub,
-    role: payload.role || 'karyawan',
+    userId: authUser.id || req.user?.sub,
+    role: authUser.role || 'karyawan',
   };
-}
-
-async function authenticate(req, reply) {
-  try {
-    if (!req.headers.authorization && req.cookies?.token) {
-      req.headers.authorization = `Bearer ${req.cookies.token}`;
-    }
-    await req.jwtVerify();
-    if (!req.user?.sub) {
-      return reply.code(401).send({ error: 'Token tidak memuat identitas pengguna.' });
-    }
-    return null;
-  } catch (_err) {
-    return reply.code(401).send({ error: 'Sesi tidak valid atau telah kadaluarsa.' });
-  }
 }
 
 function sendPolicyError(reply, err) {

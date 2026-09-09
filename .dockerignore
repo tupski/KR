@@ -35,7 +35,10 @@ storage/
 # Dev-only directories not needed at runtime
 docs/
 supabase/
-plugins/
 telemetry-*.json
 auth.json
 config.json
+
+# NOTE: plugins/ TIDAK di-ignore — vite.config.js mengimpor plugin dari
+# ./plugins/ saat build (vite-plugin-react-inline-editor, edit-mode,
+# iframe-route-restoration, selection-mode). Tanpa itu, builder stage gagal.

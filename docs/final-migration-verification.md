@@ -6,28 +6,44 @@ Status legend: PASS (executed & verified) / IMPL (code exists, not executed) / F
 
 ## Executive Result
 
-**READY WITH MANUAL VERIFICATION REQUIRED** — kode siap produksi aaPanel; eksekusi Docker/produksi
-belum dapat diverifikasi di environment lokal (Docker daemon tidak berjalan), sehingga item
-Docker/production tetap menjadi verifikasi manual di aaPanel (Ubuntu 24.04).
+**READY WITH MANUAL VERIFICATION REQUIRED** — kode terverifikasi berjalan end-to-end di Docker
+(build image, stack up, health, auth E2E, upload E2E, media E2E, data API + RPC + RLS pasca-apply
+schema Supabase). Yang tersisa manual: eksekusi di aaPanel produksi (Nginx/SSL, migrasi data live
+dengan kredensial Supabase).
 
 ## Verified (dieksekusi lokal)
 
-| Perintah | Hasil |
+| Perintah / langkah | Hasil |
 |---|---|
-| `npm test` | 153 passed / 0 failed (20 files) |
+| `npm test` | 153 passed / 0 failed (20 files, termasuk property tests) |
 | `npm run lint` | 0 errors |
 | `npx vite build` | ✓ 3579 modules, dist/ terbentuk |
-| `node tools/create-admin.js` (tanpa env) | Validasi error yang benar |
+| `docker compose build app` | ✓ image `kr-app:latest` terbentuk (3 bug build ditemukan & diperbaiki — lihat Fixed) |
+| `docker compose up -d` | ✓ kr-app healthy, kr-postgres healthy, volume kr_pgdata + kr_storage |
+| `GET /health` | 200 `{"status":"ok"}` |
+| `GET /health/db` | 200 `{"status":"ok","database":"connected"}` |
+| SPA + fallback | `/` 200 text/html, `/some/deep/route` 200 (fallback index.html), `/api/*` unknown 404 JSON |
+| Auth E2E | `tools/create-admin.js` di container → login 200 (cookie HttpOnly), `/me` 200, password salah 401, rate-limit 429 aktif |
+| Upload E2E | `/api/upload` (auth) → key `uploads/test/…png`, file ada di volume `/app/storage` |
+| Media E2E | `/api/blob?pathname=…` auth 200 + isi benar; tanpa auth 401; traversal `../../etc/passwd` 400 |
+| Data API E2E | select/insert/delete via policy (role super_admin dari DB); tabel tak dikenal → UNKNOWN_TABLE; kolom password → diblokir |
+| RPC E2E | `get_dashboard_kpis` lewat whitelist + GUC → data benar |
+| RLS pasca-apply schema | Supabase schema + 25 migration diterapkan; RLS policies aktif dan query node tetap jalan via GUC `request.jwt.*` |
 | Unit: repository + and()/or() groups, runAsActor GUC, apiClient, storage | PASS |
 
 ## Not Verified
 
-- `docker compose build / up` — Docker daemon tidak aktif di environment lokal.
-  Harus dijalankan di aaPanel Ubuntu 24.04 (lihat docs/aapanel-deployment.md).
 - Migrasi live Supabase → target (butuh kredensial MIGRATION_*).
-- Smoke test produksi HTTPS + Nginx reverse proxy.
+- Smoke test produksi HTTPS + Nginx reverse proxy aaPanel.
+- (Sebelumnya Docker; kini SUDAH dieksekusi di Docker Desktop Windows — lihat Verified.)
 
-## Fixed (audit ini)
+## Fixed (audit + Docker install test)
+
+0. **Docker install test (eksekusi nyata)** — tiga bug build/runtime tertangkap:
+   a. `.dockerignore` mengecualikan `plugins/` padahal `vite.config.js` mengimpor 4 plugin dari situ → builder gagal. `plugins/` di-unignore.
+   b. `dotenv` hanya di devDependencies → `npm ci --omit=dev` tidak memasangnya → server crash `ERR_MODULE_NOT_FOUND` di container. Pindah ke dependencies.
+   c. Dockerfile tidak menyalakan `tools/create-admin.js` → `npm run admin:create` tidak jalan di container. Ditambahkan ke stage runtime.
+   d. **Role selalu 'karyawan'** di `/api/data/*`: route mengambil role dari payload JWT (yang tidak pernah berisi role), bukan dari DB. Kini memakai `req.authUser` hasil resolusi DB dari `middleware/auth.authenticate` — konsisten dengan sisa aplikasi (payload JWT tidak dipercaya untuk otorisasi).
 
 1. **Parser `.or()` rusak untuk `and(...)`** (DashboardPemasukan.jsx:200, KetersediaanKamar.jsx:363):
    `parseOrString` memotong `and(checkin_at.gte.X,...)` jadi kolom sampah `"and(checkin_at"`.

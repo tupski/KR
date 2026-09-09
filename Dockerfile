@@ -45,8 +45,11 @@ RUN addgroup -g 1001 -S nodejs \
 
 COPY --from=deps --chown=krapp:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=krapp:nodejs /app/dist ./dist
-COPY --chown=krapp:nodejs package.json ./
+COPY --chown=krapp:nodejs package.json ./package.json
 COPY --chown=krapp:nodejs server ./server
+# tools/create-admin.js dibutuhkan `npm run admin:create` di dalam container.
+# (plugin/ dev tooling lain tidak dibutuhkan runtime)
+COPY --chown=krapp:nodejs tools/create-admin.js ./tools/create-admin.js
 
 USER krapp
 
