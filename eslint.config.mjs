@@ -50,4 +50,6 @@ export default [
 		},
 	},
 	{ files: ['tools/**/*.js', 'tailwind.config.js'], languageOptions: { globals: globals.node } },
+	// Serverless API + test infra berjalan di Node (process/Buffer/stream)
+	{ files: ['api/**/*.js', 'tests/**/*.js', 'supabase/**/*.js'], languageOptions: { globals: globals.node } },
 ];

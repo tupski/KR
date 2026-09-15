@@ -146,13 +146,27 @@ export const AuthProvider = ({ children }) => {
     return () => supabase.removeChannel(roleChannel);
   }, [user?.id, checkUserRole]);
 
-  const signUp = useCallback(async (email, password, options) => {
-    const { error } = await supabase.auth.signUp({ email, password, options });
-    if (error) {
-      toast({ variant: 'destructive', title: 'Sign up Failed', description: error.message || 'Something went wrong' });
-    }
-    return { error };
-  }, []);
+  // ── Sesi Blob (C-2): tukar JWT dengan cookie HttpOnly untuk <img src> ─────
+  // /api/blob memvalidasi token di setiap request; cookie kadaluarsa aman.
+  useEffect(() => {
+    const token = session?.access_token;
+    if (!token) return;
+    fetch('/api/blob-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: token }),
+      credentials: 'same-origin',
+    }).catch(() => {
+      // Dev/preview tanpa API routes: diamkan, gambar via resolveStorageUrl
+      // akan gagal 401 dan fallback direct URL tetap berlaku untuk public mode.
+    });
+  }, [session?.access_token]);
+
+  // M-4: signUp publik DIHAPUS dari aplikasi.
+  // Model: tanpa registrasi mandiri — akun dibuat super admin via
+  // RPC admin_create_user. Pembukaan signup di dashboard Supabase
+  // (Authentication -> Providers -> Email -> "Enable Signup") harus OFF;
+  // pengaturan dashboard tidak dapat diubah dari repo ini.
 
   const signIn = useCallback(async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -198,11 +212,11 @@ export const AuthProvider = ({ children }) => {
     userRole,
     isSuperAdmin,
     isAdmin,
-    signUp,
+    signUp: null, // dihapus (M-4): tidak ada registrasi mandiri
     signIn,
     signOut,
     refreshSession,
-  }), [user, session, loading, isSyncingRole, userRole, isSuperAdmin, isAdmin, signUp, signIn, signOut, refreshSession]);
+  }), [user, session, loading, isSyncingRole, userRole, isSuperAdmin, isAdmin, signIn, signOut, refreshSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
