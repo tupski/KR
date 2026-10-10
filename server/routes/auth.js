@@ -104,8 +104,16 @@ export default async function authRoutes(fastify, _opts) {
   });
 
   // POST /api/auth/logout
+  // Sprint 2A / N-3: atribut clear HARUS cocok dengan atribut set di /login
+  // (path, httpOnly, secure, sameSite) agar browser benar-benar menghapus
+  // cookie sesi. Kegagalan cleanup tidak menggagalkan logout.
   fastify.post('/logout', { preHandler: [originGuard(cfg)] }, async (_req, reply) => {
-    reply.clearCookie('token', { path: '/' });
+    reply.clearCookie('token', {
+      path: cookieOpts.path,
+      httpOnly: cookieOpts.httpOnly,
+      secure: cookieOpts.secure,
+      sameSite: cookieOpts.sameSite,
+    });
     return reply.send({ ok: true, message: 'Berhasil keluar.' });
   });
 

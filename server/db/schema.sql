@@ -75,7 +75,17 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     checkin_at TIMESTAMP WITH TIME ZONE,
     deposit_cash DECIMAL(15,2) DEFAULT 0,
     deposit_transfer DECIMAL(15,2) DEFAULT 0,
-    deposit_returned_at TIMESTAMP WITH TIME ZONE
+    deposit_returned_at TIMESTAMP WITH TIME ZONE,
+    -- Sprint 2A / N-1: kolom bukti refund deposit (Supabase:
+    -- 20260416_deposit_returns.sql:7-8). Wajib ada agar alur refund
+    -- deposit menyimpan referensi bukti ke storage driver.
+    deposit_refund_proof_url TEXT DEFAULT NULL,
+    -- Sprint 2A / M-5: integritas nilai uang (non-negatif).
+    CONSTRAINT transactions_cash_amount_nonnegative_check CHECK (cash_amount >= 0),
+    CONSTRAINT transactions_transfer_amount_nonnegative_check CHECK (transfer_amount >= 0),
+    CONSTRAINT transactions_marketing_fee_nonnegative_check CHECK (marketing_fee >= 0),
+    CONSTRAINT transactions_deposit_cash_nonnegative_check CHECK (deposit_cash >= 0),
+    CONSTRAINT transactions_deposit_transfer_nonnegative_check CHECK (deposit_transfer >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS public.pengeluaran_categories (
@@ -173,3 +183,69 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
     value JSONB,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
+
+-- =============================================================
+-- Sprint 2A / M-5 + N-1: evolusi skema idempoten untuk database
+-- yang SUDAH ada (CREATE TABLE IF NOT EXISTS di atas tidak
+-- menyentuh tabel existing). Aman dijalankan ulang.
+-- =============================================================
+
+-- N-1: kolom bukti refund deposit (legacy Supabase 20260416_deposit_returns.sql).
+ALTER TABLE public.transactions
+  ADD COLUMN IF NOT EXISTS deposit_refund_proof_url TEXT DEFAULT NULL;
+
+-- M-5: CHECK non-negatif untuk semua kolom uang. Pola DO-block karena
+-- Postgres tidak punya ADD CONSTRAINT IF NOT EXISTS. Constraint memakai
+-- NOT VALID supaya migrasi tidak gagal pada data historis yang mungkin
+-- mengandung nilai negatif — validasi data lihat VALIDATE di bawah dan
+-- strategi di SECURITY_REMEDIATION_SPRINT_2A.md.
+DO $$ BEGIN
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_cash_amount_nonnegative_check CHECK (cash_amount >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_transfer_amount_nonnegative_check CHECK (transfer_amount >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_marketing_fee_nonnegative_check CHECK (marketing_fee >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_deposit_cash_nonnegative_check CHECK (deposit_cash >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_deposit_transfer_nonnegative_check CHECK (deposit_transfer >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE public.pengeluaran
+    ADD CONSTRAINT pengeluaran_jumlah_nonnegative_check CHECK (jumlah >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE public.tagihan_bulanan
+    ADD CONSTRAINT tagihan_bulanan_amount_nonnegative_check CHECK (amount >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE public.tagihan_fee_lunas
+    ADD CONSTRAINT tagihan_fee_lunas_total_fee_nonnegative_check CHECK (total_fee >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.tagihan_fee_lunas
+    ADD CONSTRAINT tagihan_fee_lunas_customer_count_nonnegative_check CHECK (customer_count >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- requests.amount nullable (belum tentu ada nominal) — NULL lolos CHECK
+-- otomatis; hanya nilai negatif yang ditolak.
+DO $$ BEGIN
+  ALTER TABLE public.requests
+    ADD CONSTRAINT requests_amount_nonnegative_check CHECK (amount >= 0) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Setelah data historis dibersihkan (lihat runbook), validasi penuh:
+--   ALTER TABLE public.transactions VALIDATE CONSTRAINT transactions_cash_amount_nonnegative_check;
+--   ... (satu VALIDATE per constraint di atas; VALIDATE tidak memblokir baca/tulis)

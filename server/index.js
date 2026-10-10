@@ -20,7 +20,8 @@ import {
 } from './storage/index.js';
 import authRoutes from './routes/auth.js';
 import apiRoutes from './routes/api.js';
-import { checkDbHealth, closePool } from './db/index.js';
+import { checkDbHealth, closePool, query } from './db/index.js';
+import { findObjectOwner, authorizeObjectRead } from './storage/ownership.js';
 
 dotenv.config();
 
@@ -127,6 +128,8 @@ export async function buildServer(cfg = config) {
   // ── Private media proxy: /api/blob (legacy contract preserved) ──
   // Objects are NOT publicly listed; access requires an authenticated session
   // because legacy Vercel Blob objects here were PRIVATE (KTP, bukti transfer).
+  // Sprint 2A / N-1: otorisasi per-objek (owner ATAU admin/super_admin),
+  // mirror Sprint 1 api/blob.js. Tanpa record pemilik yang cocok -> 404.
   fastify.get('/api/blob', {
     config: { rateLimit: { max: 300, timeWindow: '1 minute' } },
     preHandler: [authenticate],
@@ -140,13 +143,28 @@ export async function buildServer(cfg = config) {
       return reply.code(400).send({ error: 'Referensi berkas tidak valid.' });
     }
 
+    const ownership = await findObjectOwner(canonicalKey, query);
+    if (!ownership) {
+      return reply.code(404).send({ error: 'File tidak ditemukan.' });
+    }
+    const decision = authorizeObjectRead({
+      ownerUserId: ownership.ownerUserId,
+      requesterUserId: req.authUser?.id,
+      requesterRole: req.authUser?.role,
+    });
+    if (decision !== 'allow') {
+      // 404 juga untuk "bukan milikmu" — jangan konfirmasi keberadaan objek.
+      return reply.code(404).send({ error: 'File tidak ditemukan.' });
+    }
+
     const driver = storageDriver;
     try {
       const data = await driver.get(canonicalKey);
       if (!data) {
         return reply.code(404).send({ error: 'File tidak ditemukan di storage.' });
       }
-      reply.header('Cache-Control', 'private, max-age=300');
+      // Objek privat: tidak boleh di-cache shared/proxy.
+      reply.header('Cache-Control', 'private, no-store');
       reply.header('X-Content-Type-Options', 'nosniff');
       return reply.send(data);
     } catch (err) {
