@@ -459,7 +459,7 @@ const KetersediaanKamar = () => {
 
     const fromDateOnly = fromDate.toISOString().slice(0, 10);
     const toDateOnly = new Date(toDate.getTime() - 1).toISOString().slice(0, 10);
-    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: expenses, error: expenseError }, { data: assignments }] = await Promise.all([
+    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: expenses, error: expenseError }, { data: unitBills, error: unitBillError }, { data: assignments }] = await Promise.all([
       supabase.from('nomor_kamar').select('*').order('lokasi').order('name'),
       supabase
         .from('transactions')
@@ -470,11 +470,17 @@ const KetersediaanKamar = () => {
         .select('id, apartment_location, room_number, nama_pengeluaran, jumlah, tanggal, keterangan, category')
         .gte('tanggal', fromDateOnly)
         .lte('tanggal', toDateOnly),
+      supabase
+        .from('tagihan_bulanan')
+        .select('id, apartment_location, room_number, amount, paid_at, status')
+        .eq('status', 'paid')
+        .gte('paid_at', fromIso)
+        .lt('paid_at', toIso),
       supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id),
     ]);
 
-    if (roomsError || transError || expenseError) {
-      toast({ title: 'Gagal memuat laporan kamar', description: (roomsError || transError || expenseError)?.message, variant: 'destructive' });
+    if (roomsError || transError || expenseError || unitBillError) {
+      toast({ title: 'Gagal memuat laporan kamar', description: (roomsError || transError || expenseError || unitBillError)?.message, variant: 'destructive' });
       setReportLoading(false);
       return;
     }
@@ -501,7 +507,33 @@ const KetersediaanKamar = () => {
       detailList.push(tx);
       txDetailMap.set(key, detailList);
     });
-    (expenses || []).forEach((expense) => {
+    const reportExpenses = [...(expenses || [])];
+    (unitBills || []).forEach((bill) => {
+      const paidDate = new Date(bill.paid_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+      const billName = `Bayar Tagihan Unit ${bill.apartment_location} - ${bill.room_number}`;
+      const alreadyRecorded = reportExpenses.some((expense) => (
+        expense.nama_pengeluaran === billName
+        && Number(expense.jumlah || 0) === Number(bill.amount || 0)
+        && expense.tanggal === paidDate
+        && expense.apartment_location === bill.apartment_location
+        && expense.room_number === bill.room_number
+      ));
+
+      if (!alreadyRecorded) {
+        reportExpenses.push({
+          id: `tagihan-${bill.id}`,
+          apartment_location: bill.apartment_location,
+          room_number: bill.room_number,
+          nama_pengeluaran: billName,
+          jumlah: bill.amount,
+          tanggal: paidDate,
+          keterangan: 'Tagihan unit yang telah dibayar',
+          category: 'Tagihan Unit',
+        });
+      }
+    });
+
+    reportExpenses.forEach((expense) => {
       if (!expense.apartment_location || !expense.room_number) return;
       const key = `${expense.apartment_location}__${expense.room_number}`;
       const current = expenseMap.get(key) || { pengeluaran: 0 };
@@ -555,6 +587,16 @@ const KetersediaanKamar = () => {
 
   useEffect(() => {
     loadRoomReport();
+  }, [loadRoomReport]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('room-report-finance-v1')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengeluaran' }, loadRoomReport)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tagihan_bulanan' }, loadRoomReport)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [loadRoomReport]);
 
   const handleCheckOut = async (room) => {
