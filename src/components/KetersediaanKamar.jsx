@@ -31,6 +31,54 @@ const formatDate = (date) =>
 const formatRupiah = (v) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v || 0);
 
+const formatCompactRupiah = (v) => {
+  const amount = Number(v) || 0;
+  const absoluteAmount = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+
+  if (absoluteAmount >= 1_000_000) {
+    const millions = new Intl.NumberFormat('id-ID', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(absoluteAmount / 1_000_000);
+    return `${sign}Rp ${millions} jt`;
+  }
+
+  if (absoluteAmount >= 1_000) {
+    const thousands = new Intl.NumberFormat('id-ID', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    }).format(absoluteAmount / 1_000);
+    return `${sign}Rp ${thousands} rb`;
+  }
+
+  return formatRupiah(amount);
+};
+
+const FinancialSummaryCard = ({ label, value, tone, valueTone }) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  return (
+    <div className={`relative min-w-0 rounded-xl px-2 py-3 text-center sm:px-3 ${tone}`}>
+      <button
+        type="button"
+        onClick={() => setShowTooltip((visible) => !visible)}
+        aria-expanded={showTooltip}
+        aria-label={`${label}: ${formatRupiah(value)}. Klik untuk ${showTooltip ? 'menyembunyikan' : 'menampilkan'} nominal lengkap`}
+        className="w-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      >
+        <p>{label}</p>
+        <p className={`mt-1 break-words text-sm font-bold leading-tight ${valueTone}`}>{formatCompactRupiah(value)}</p>
+      </button>
+      {showTooltip && (
+        <div role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-lg">
+          {formatRupiah(value)}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const getSewaDisplay = (tx) => {
   if (!tx) return '-';
   const hours = Number(tx.rental_duration || 0);
@@ -188,38 +236,91 @@ const RoomDetailModal = ({ room, onClose, onCheckOut, canCheckout }) => {
   );
 };
 
-const ReportRoomDetailModal = ({ room, transactions, onClose }) => {
+const ReportRoomDetailModal = ({ room, transactions, expenses, filterLabel, onClose }) => {
+  const [activeTab, setActiveTab] = useState('semua');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 5;
+
   if (!room) return null;
+
+  const rows = [
+    ...transactions.map((tx) => ({
+      id: `tx-${tx.id}`,
+      type: 'pendapatan',
+      date: tx.checkin_at || tx.created_at,
+      title: capitalizeWords(tx.customer_name || 'Tanpa nama'),
+      description: `Tunai: ${formatRupiah(tx.cash_amount || 0)} · Transfer: ${formatRupiah(tx.transfer_amount || 0)}`,
+      amount: Number(tx.cash_amount || 0) + Number(tx.transfer_amount || 0),
+    })),
+    ...expenses.map((expense) => ({
+      id: `expense-${expense.id}`,
+      type: 'pengeluaran',
+      date: expense.tanggal,
+      title: expense.nama_pengeluaran || 'Pengeluaran',
+      description: expense.keterangan || expense.category || 'Pengeluaran kamar',
+      amount: Number(expense.jumlah || 0),
+    })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const visibleRows = rows.filter((row) => activeTab === 'semua' || row.type === activeTab);
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedRows = visibleRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const income = Number(room.pendapatan || 0);
+  const expenseTotal = Number(room.pengeluaran || 0);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 pb-24 pt-6 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl max-h-[75vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{room.lokasi}</p>
             <h2 className="text-xl font-bold text-slate-900">{room.name}</h2>
+            <p className="mt-1 text-xs text-slate-500">{filterLabel}</p>
           </div>
-          <button onClick={onClose} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100">
+          <button onClick={onClose} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100" aria-label="Tutup detail kamar">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="mb-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-700">
-          Transaksi: <span className="font-bold text-slate-900">{room.jumlahDigunakan || 0}</span> · Pendapatan:{' '}
-          <span className="font-bold text-emerald-700">{formatRupiah(room.pendapatan || 0)}</span>
+        <div className="mb-4 grid grid-cols-3 gap-2 text-xs">
+          <FinancialSummaryCard label="Pendapatan" value={income} tone="bg-emerald-50 text-emerald-700" valueTone="text-emerald-900" />
+          <FinancialSummaryCard label="Pengeluaran" value={expenseTotal} tone="bg-red-50 text-red-700" valueTone="text-red-900" />
+          <FinancialSummaryCard
+            label="Laba bersih"
+            value={income - expenseTotal}
+            tone={income - expenseTotal >= 0 ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}
+            valueTone={income - expenseTotal >= 0 ? 'text-blue-900' : 'text-amber-900'}
+          />
+        </div>
+        <div className="mb-4 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+          {[
+            ['semua', 'Semua'],
+            ['pendapatan', 'Pendapatan'],
+            ['pengeluaran', 'Pengeluaran'],
+          ].map(([value, label]) => (
+            <button key={value} type="button" onClick={() => { setActiveTab(value); setPage(1); }} className={`rounded-lg px-2 py-2 text-xs font-bold ${activeTab === value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{label}</button>
+          ))}
         </div>
         <div className="space-y-2">
-          {transactions.length === 0 ? (
-            <p className="text-center text-sm text-slate-500 py-4">Tidak ada transaksi pada periode ini.</p>
-          ) : (
-            transactions.map((tx) => (
-              <div key={tx.id} className="rounded-xl border p-3 space-y-1">
-                <p className="text-xs text-slate-500">{formatTimeWIB(new Date(tx.checkin_at || tx.created_at))}</p>
-                <p className="text-sm font-semibold text-slate-800">{capitalizeWords(tx.customer_name || 'Tanpa nama')}</p>
-                <p className="text-xs text-slate-600">Tunai: {formatRupiah(tx.cash_amount || 0)} · Transfer: {formatRupiah(tx.transfer_amount || 0)}</p>
-                <p className="text-xs font-semibold text-slate-800">Total: {formatRupiah((tx.cash_amount || 0) + (tx.transfer_amount || 0))}</p>
+          {pagedRows.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Tidak ada data pada tab ini.</p>
+          ) : pagedRows.map((row) => (
+            <div key={row.id} className="rounded-xl border p-3 space-y-1">
+              <div className="flex items-start justify-between gap-3">
+                <div><p className="text-sm font-semibold text-slate-800">{row.title}</p><p className="text-xs text-slate-500">{new Date(row.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</p></div>
+                <p className={`text-sm font-bold ${row.type === 'pendapatan' ? 'text-emerald-700' : 'text-red-600'}`}>{row.type === 'pendapatan' ? '+' : '-'}{formatRupiah(row.amount)}</p>
               </div>
-            ))
-          )}
+              <p className="text-xs text-slate-600">{row.description}</p>
+            </div>
+          ))}
         </div>
+        {visibleRows.length > PAGE_SIZE && (
+          <div className="mt-4 flex items-center justify-between text-xs">
+            <button type="button" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Sebelumnya</button>
+            <span className="text-slate-500">Hal {safePage}/{totalPages}</span>
+            <button type="button" disabled={safePage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Berikutnya</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -243,6 +344,7 @@ const KetersediaanKamar = () => {
   const [reportLocationFilter, setReportLocationFilter] = useState('ALL');
   const [roomSearchTerm, setRoomSearchTerm] = useState('');
   const [reportTransactionsByRoom, setReportTransactionsByRoom] = useState({});
+  const [reportExpensesByRoom, setReportExpensesByRoom] = useState({});
   const [reportPageByLocation, setReportPageByLocation] = useState({});
   const [selectedReportRoom, setSelectedReportRoom] = useState(null);
 
@@ -355,17 +457,24 @@ const KetersediaanKamar = () => {
     const fromIso = fromDate.toISOString();
     const toIso = toDate.toISOString();
 
-    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: assignments }] = await Promise.all([
+    const fromDateOnly = fromDate.toISOString().slice(0, 10);
+    const toDateOnly = new Date(toDate.getTime() - 1).toISOString().slice(0, 10);
+    const [{ data: allRooms, error: roomsError }, { data: transactions, error: transError }, { data: expenses, error: expenseError }, { data: assignments }] = await Promise.all([
       supabase.from('nomor_kamar').select('*').order('lokasi').order('name'),
       supabase
         .from('transactions')
         .select('id, apartment_location, room_number, customer_name, checkin_at, created_at, cash_amount, transfer_amount')
         .or(`and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`),
+      supabase
+        .from('pengeluaran')
+        .select('id, apartment_location, room_number, nama_pengeluaran, jumlah, tanggal, keterangan, category')
+        .gte('tanggal', fromDateOnly)
+        .lte('tanggal', toDateOnly),
       supabase.from('user_location_assignments').select('location_name').eq('user_id', user?.id),
     ]);
 
-    if (roomsError || transError) {
-      toast({ title: 'Gagal memuat laporan kamar', description: (roomsError || transError)?.message, variant: 'destructive' });
+    if (roomsError || transError || expenseError) {
+      toast({ title: 'Gagal memuat laporan kamar', description: (roomsError || transError || expenseError)?.message, variant: 'destructive' });
       setReportLoading(false);
       return;
     }
@@ -380,6 +489,8 @@ const KetersediaanKamar = () => {
 
     const txMap = new Map();
     const txDetailMap = new Map();
+    const expenseMap = new Map();
+    const expenseDetailMap = new Map();
     (transactions || []).forEach((tx) => {
       const key = `${tx.apartment_location || ''}__${tx.room_number || ''}`;
       const current = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
@@ -390,16 +501,28 @@ const KetersediaanKamar = () => {
       detailList.push(tx);
       txDetailMap.set(key, detailList);
     });
+    (expenses || []).forEach((expense) => {
+      if (!expense.apartment_location || !expense.room_number) return;
+      const key = `${expense.apartment_location}__${expense.room_number}`;
+      const current = expenseMap.get(key) || { pengeluaran: 0 };
+      current.pengeluaran += Number(expense.jumlah || 0);
+      expenseMap.set(key, current);
+      const detailList = expenseDetailMap.get(key) || [];
+      detailList.push(expense);
+      expenseDetailMap.set(key, detailList);
+    });
 
     const grouped = filteredRooms.reduce((acc, room) => {
       const loc = room.lokasi || 'Lainnya';
       if (!acc[loc]) acc[loc] = [];
       const key = `${room.lokasi || ''}__${room.name || ''}`;
       const agg = txMap.get(key) || { jumlahDigunakan: 0, pendapatan: 0 };
+      const expenseAgg = expenseMap.get(key) || { pengeluaran: 0 };
       acc[loc].push({
         ...room,
         jumlahDigunakan: agg.jumlahDigunakan,
         pendapatan: agg.pendapatan,
+        pengeluaran: expenseAgg.pengeluaran,
       });
       return acc;
     }, {});
@@ -410,6 +533,7 @@ const KetersediaanKamar = () => {
 
     setReportGroupedRooms(grouped);
     setReportTransactionsByRoom(Object.fromEntries(txDetailMap));
+    setReportExpensesByRoom(Object.fromEntries(expenseDetailMap));
     setReportPageByLocation({});
     setReportLoading(false);
   }, [reportFilterType, reportMonth, reportStartDate, reportEndDate, user?.id, userRole]);
@@ -587,6 +711,8 @@ const KetersediaanKamar = () => {
                 if (rooms.length === 0) return null;
                 const totalTransaksi = rooms.reduce((sum, r) => sum + (r.jumlahDigunakan || 0), 0);
                 const totalPendapatan = rooms.reduce((sum, r) => sum + (r.pendapatan || 0), 0);
+                const totalPengeluaran = rooms.reduce((sum, r) => sum + (r.pengeluaran || 0), 0);
+                const totalLaba = totalPendapatan - totalPengeluaran;
                 const currentPage = reportPageByLocation[location] || 1;
                 const totalPages = Math.max(1, Math.ceil(rooms.length / REPORT_PAGE_SIZE));
                 const pageStart = (currentPage - 1) * REPORT_PAGE_SIZE;
@@ -594,11 +720,21 @@ const KetersediaanKamar = () => {
                 return (
                   <div key={location} className="rounded-2xl border bg-white p-4 shadow-sm space-y-3">
                     <div className="flex items-start justify-between gap-2">
-                      <h2 className="text-sm font-bold text-slate-800">{location}</h2>
-                      <p className="text-[11px] text-slate-500">{rooms.length} kamar</p>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <h2 className="text-sm font-bold text-slate-800">{location}</h2>
+                        <span className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">Transaksi: <span className="font-bold text-slate-800">{totalTransaksi}</span></span>
+                      </div>
+                      <p className="shrink-0 text-[11px] text-slate-500">{rooms.length} kamar</p>
                     </div>
-                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                      Transaksi: <span className="font-bold text-slate-800">{totalTransaksi}</span> · Pendapatan: <span className="font-bold text-emerald-700">{formatRupiah(totalPendapatan)}</span>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <FinancialSummaryCard label="Pendapatan" value={totalPendapatan} tone="bg-emerald-50 text-emerald-700" valueTone="text-emerald-900" />
+                      <FinancialSummaryCard label="Pengeluaran" value={totalPengeluaran} tone="bg-red-50 text-red-700" valueTone="text-red-900" />
+                      <FinancialSummaryCard
+                        label="Laba Bersih"
+                        value={totalLaba}
+                        tone={totalLaba >= 0 ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}
+                        valueTone={totalLaba >= 0 ? 'text-blue-900' : 'text-amber-900'}
+                      />
                     </div>
                     <div className="space-y-2">
                       {visibleRooms.map((room) => (
@@ -606,6 +742,8 @@ const KetersediaanKamar = () => {
                           <p className="text-sm font-bold text-slate-800">{room.name}</p>
                           <p className="text-xs text-slate-600">Digunakan: <span className="font-semibold text-slate-800">{room.jumlahDigunakan || 0}x</span></p>
                           <p className="text-xs text-slate-600">Pendapatan: <span className="font-semibold text-emerald-700">{formatRupiah(room.pendapatan || 0)}</span></p>
+                          <p className="text-xs text-slate-600">Pengeluaran: <span className="font-semibold text-red-600">{formatRupiah(room.pengeluaran || 0)}</span></p>
+                          <p className={`text-xs font-semibold ${(room.pendapatan || 0) - (room.pengeluaran || 0) >= 0 ? 'text-blue-700' : 'text-amber-700'}`}>Laba bersih: {formatRupiah((room.pendapatan || 0) - (room.pengeluaran || 0))}</p>
                         </button>
                       ))}
                     </div>
@@ -811,6 +949,8 @@ const KetersediaanKamar = () => {
           <ReportRoomDetailModal
             room={selectedReportRoom}
             transactions={reportTransactionsByRoom[`${selectedReportRoom.lokasi || ''}__${selectedReportRoom.name || ''}`] || []}
+            expenses={reportExpensesByRoom[`${selectedReportRoom.lokasi || ''}__${selectedReportRoom.name || ''}`] || []}
+            filterLabel={reportFilterType === 'bulan' ? `Periode ${reportMonth}` : `Periode ${reportStartDate} – ${reportEndDate}`}
             onClose={() => setSelectedReportRoom(null)}
           />
         )}

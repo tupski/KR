@@ -1461,6 +1461,7 @@ const PengeluaranUnit = ({ onDataUpdate }) => {
   const [startDate, setStartDate] = useState(() => getDefaultDateRange().startDate);
   const [endDate, setEndDate] = useState(() => getDefaultDateRange().endDate);
   const [showLoadingTimeout, setShowLoadingTimeout] = useState(false);
+  const [isRingkasanOpen, setIsRingkasanOpen] = useState(false);
 
   const loadOptions = useCallback(async () => {
     const { data: lokasiData } = await supabase.from('lokasi_apartemen').select('name').order('name');
@@ -1505,11 +1506,11 @@ const PengeluaranUnit = ({ onDataUpdate }) => {
     filters: pengeluaranFilters,
   });
 
-  // Server-side category summary via RPC — masih dipakai untuk CategoryDetailPopup
+  // Server-side category summary via RPC, used for the total and unit summary
   const {
     data: categorySummary,
     isLoading: isCategoryLoading,
-    error: categoryError,
+    error: categorySummaryError,
     refresh: refreshCategorySummary,
   } = useCategorySummary({
     lokasi: selectedLokasi || undefined,
@@ -1517,6 +1518,12 @@ const PengeluaranUnit = ({ onDataUpdate }) => {
     startDate: startDate || undefined,
     endDate: endDate || undefined,
   });
+
+  // Total from server-side summary (covers all pages in date range)
+  const totalPengeluaran = useMemo(
+    () => (categorySummary || []).reduce((sum, c) => sum + Number(c.total_amount || 0), 0),
+    [categorySummary]
+  );
 
   // Loading timeout indicator (Requirement 4.6 - 10s timeout display)
   useEffect(() => {
@@ -1618,6 +1625,77 @@ const PengeluaranUnit = ({ onDataUpdate }) => {
       {/* Detail Pengeluaran with server-side pagination */}
       <div className="glassmorphic-card p-5 space-y-4">
         <h2 className="font-bold text-lg text-gray-800">Detail Pengeluaran</h2>
+
+        {/* Ringkasan Pengeluaran per unit - collapsible, default collapsed */}
+        <div className="border rounded-xl overflow-hidden">
+          <button
+            onClick={() => setIsRingkasanOpen(prev => !prev)}
+            className="w-full flex justify-between items-center px-4 py-3 bg-white/60 hover:bg-white/80 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-red-500" />
+              <span className="font-semibold text-gray-800 text-sm">Ringkasan Pengeluaran</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-red-600">{formatRupiah(totalPengeluaran)}</span>
+              <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isRingkasanOpen ? 'rotate-180' : ''}`} />
+            </div>
+          </button>
+          <AnimatePresence initial={false}>
+            {isRingkasanOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-3 pt-1 space-y-2 border-t bg-white/30">
+                  {isCategoryLoading && (
+                    <div className="flex justify-center py-3">
+                      <Spinner className="w-5 h-5 text-blue-500" />
+                    </div>
+                  )}
+                  {categorySummaryError && (
+                    <div className="flex items-center gap-2 py-2 text-sm text-red-700">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>{categorySummaryError}</span>
+                    </div>
+                  )}
+                  {!isCategoryLoading && !categorySummaryError && categorySummary && categorySummary.length > 0 && (
+                    <div className="space-y-1.5">
+                      {categorySummary.map((cat) => {
+                        const lbl = cat.category && String(cat.category).trim() !== '' ? cat.category : 'Lainnya';
+                        return (
+                          <div
+                            key={lbl}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleCategoryClick(cat)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCategoryClick(cat); } }}
+                            className="flex justify-between items-center bg-white/50 px-3 py-2 rounded-lg cursor-pointer hover:bg-white/80 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                          >
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-gray-800">{lbl}</span>
+                              <span className="text-xs text-gray-500">{cat.transaction_count} transaksi</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-900">{formatRupiah(cat.total_amount)}</span>
+                              <ChevronRight className="w-4 h-4 text-gray-400" />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!isCategoryLoading && !categorySummaryError && (!categorySummary || categorySummary.length === 0) && (
+                    <p className="text-center text-sm text-gray-500 py-2">Tidak ada data untuk filter ini</p>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         {/* Error message (Requirement 4 - error handling) */}
         {queryError && (
@@ -1756,6 +1834,7 @@ const Pengeluaran = ({ onDataUpdate }) => {
   const {
     data: categorySummary,
     isLoading: isCategoryLoading,
+    error: categorySummaryError,
     refresh: refreshCategorySummary,
   } = useCategorySummary({
     startDate: startDate || undefined,
