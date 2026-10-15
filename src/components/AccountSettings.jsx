@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { uploadToVercelBlob } from '@/lib/vercelBlobUpload';
 import { compressImageFile } from '@/lib/compressImage';
 import { isPushSupported, registerPushSubscription, saveSubscriptionToSupabase } from '@/lib/pushClient';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 
 const DEFAULT_AVATAR = '/logo-kr-transparent-square.png';
 
@@ -223,7 +224,7 @@ export default function AccountSettings({ open, onOpenChange }) {
   };
 
   const handleEnablePush = async () => {
-    if (!userId) return;
+    if (!NOTIFICATIONS_ENABLED || !userId) return;
     if (!isPushSupported()) {
       toast({
         title: 'Push tidak didukung',
@@ -407,18 +408,20 @@ export default function AccountSettings({ open, onOpenChange }) {
           </Button>
         </section>
 
-        <section className="rounded-xl border bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold text-slate-900">Notifikasi</h3>
-          <p className="text-xs text-slate-600">Aktifkan push notification agar Anda menerima pemberitahuan penting.</p>
-          <Button type="button" className="mt-3 w-full bg-blue-700 hover:bg-blue-800" onClick={handleEnablePush}>
-            Aktifkan Notifikasi
-          </Button>
-          {!vapidPublicKey && (
-            <p className="mt-2 text-[11px] text-slate-500">
-              Catatan: `VITE_VAPID_PUBLIC_KEY` belum diset di environment.
-            </p>
-          )}
-        </section>
+        {NOTIFICATIONS_ENABLED && (
+          <section className="rounded-xl border bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold text-slate-900">Notifikasi</h3>
+            <p className="text-xs text-slate-600">Aktifkan push notification agar Anda menerima pemberitahuan penting.</p>
+            <Button type="button" className="mt-3 w-full bg-blue-700 hover:bg-blue-800" onClick={handleEnablePush}>
+              Aktifkan Notifikasi
+            </Button>
+            {!vapidPublicKey && (
+              <p className="mt-2 text-[11px] text-slate-500">
+                Catatan: `VITE_VAPID_PUBLIC_KEY` belum diset di environment.
+              </p>
+            )}
+          </section>
+        )}
 
         <p className="text-center text-[11px] text-slate-500">
           © {new Date().getFullYear()} - Kakarama Room. All rights reserved.

@@ -56,11 +56,21 @@ const OmsetChart = () => {
   
   useEffect(() => {
     fetchData();
+    let refreshTimer = null;
+    const debouncedFetchData = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        fetchData();
+      }, 1500);
+    };
+
     const channel = supabase.channel('realtime-omset-chart')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedFetchData)
       .subscribe();
 
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [selectedMonth]);

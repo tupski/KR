@@ -12,6 +12,7 @@ import { compressImageFile } from '@/lib/compressImage';
 import ImageViewerModal from '@/components/ImageViewerModal';
 import { calcEndAt, getActiveTransaction, getRentalConfig, capitalizeWords } from '@/lib/roomUtils';
 import DayInfoBanner from '@/components/DayInfoBanner';
+import { cancelScheduledAppReload, FORM_DIRTY_STORAGE_PREFIX } from '@/utils/checkAppUpdate';
 
 const RENTAL_TYPE_OPTIONS = [
   { value: 'TRANSIT', label: 'Transit' },
@@ -116,6 +117,7 @@ const FormTransaksiModern = ({
   const [ktpFile, setKtpFile] = useState(null);
   const [buktiTransferFile, setBuktiTransferFile] = useState(null);
   const draftKey = `${DRAFT_STORAGE_KEY}:${user?.id || 'guest'}`;
+  const dirtyKey = `${FORM_DIRTY_STORAGE_PREFIX}${user?.id || 'guest'}`;
   const [formData, setFormData] = useState({
     namaCustomer: '',
     lokasiApartemen: '',
@@ -178,10 +180,25 @@ const FormTransaksiModern = ({
       ktpFile: null,
       buktiTransferFile: null,
     };
-    localStorage.setItem(draftKey, JSON.stringify(payload));
-    // Tandai form dirty agar checkAppUpdate tidak reload otomatis
-    localStorage.setItem('kr:form-dirty', '1');
-  }, [draftKey, formData]);
+    const hasUnsavedData = [
+      'namaCustomer', 'lokasiApartemen', 'nomorKamar', 'namaMarketing', 'jenisSewa',
+      'lamaSewa', 'customSewaJam', 'shift', 'tunai', 'transfer', 'transferKe',
+      'feeMarketing', 'depositCash', 'depositTransfer', 'checkinAt', 'input_by',
+    ].some((key) => String(formData[key] || '').trim() !== '') || Boolean(ktpFile || buktiTransferFile);
+
+    if (hasUnsavedData) {
+      localStorage.setItem(draftKey, JSON.stringify(payload));
+      localStorage.setItem(dirtyKey, '1');
+      localStorage.removeItem('kr:form-dirty');
+    } else {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(dirtyKey);
+    }
+  }, [dirtyKey, draftKey, formData, ktpFile, buktiTransferFile]);
+
+  useEffect(() => () => {
+    cancelScheduledAppReload();
+  }, []);
 
   useEffect(() => {
     const fetchRefs = async () => {
@@ -390,6 +407,10 @@ const FormTransaksiModern = ({
   };
 
   const resetForm = () => {
+    cancelScheduledAppReload();
+    localStorage.removeItem(dirtyKey);
+    localStorage.removeItem('kr:form-dirty');
+    localStorage.removeItem('kr:app-update-pending');
     setFormData((prev) => ({
       ...prev,
       namaCustomer: '',
@@ -503,16 +524,8 @@ const FormTransaksiModern = ({
           ? `ID: ${insertedTx.id} • Project: ${supabaseProjectRef}`
           : `Project: ${supabaseProjectRef}`,
       });
-      // Hapus form-dirty flag dan cek apakah ada pending app update
-      localStorage.removeItem('kr:form-dirty');
       resetForm();
-
-      // Jika ada pending update, reload sekarang setelah form berhasil disubmit
-      const pendingVersion = localStorage.getItem('kr:app-update-pending');
-      if (pendingVersion) {
-        localStorage.removeItem('kr:app-update-pending');
-        setTimeout(() => window.location.reload(), 500);
-      }
+      cancelScheduledAppReload();
 
       onDataUpdate?.();
       onSuccess?.();

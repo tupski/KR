@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 
 const TYPE_OPTIONS = [
@@ -37,7 +38,7 @@ export default function NotificationPreferences({ open, onOpenChange }) {
   }, []);
 
   const load = async () => {
-    if (!userId) return;
+    if (!NOTIFICATIONS_ENABLED || !userId) return;
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -62,7 +63,7 @@ export default function NotificationPreferences({ open, onOpenChange }) {
   };
 
   useEffect(() => {
-    if (open) load();
+    if (NOTIFICATIONS_ENABLED && open) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, userId]);
 
@@ -71,7 +72,7 @@ export default function NotificationPreferences({ open, onOpenChange }) {
   };
 
   const handleSave = async () => {
-    if (!userId) return;
+    if (!NOTIFICATIONS_ENABLED || !userId) return;
     setSaving(true);
     try {
       const payload = {
@@ -90,6 +91,8 @@ export default function NotificationPreferences({ open, onOpenChange }) {
       setSaving(false);
     }
   };
+
+  if (!NOTIFICATIONS_ENABLED) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

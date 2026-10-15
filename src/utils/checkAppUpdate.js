@@ -1,86 +1,157 @@
 /**
- * Helper untuk mengecek versi aplikasi dan memaksa pembersihan cache jika ada update.
+ * Version checks are intentionally passive. A new version is recorded as
+ * pending so the current page and any unfinished form remain untouched.
  */
-export const checkAppUpdate = async (options = { clearStorage: true }) => {
+
+const VERSION_STORAGE_KEY = 'app_version';
+const PENDING_UPDATE_STORAGE_KEY = 'kr:app-update-pending';
+export const FORM_DIRTY_STORAGE_PREFIX = 'kr:form-dirty:';
+const LEGACY_FORM_DIRTY_KEY = 'kr:form-dirty';
+
+const state = {
+  inFlight: null,
+  reloadTimer: null,
+  lifecycleGeneration: 0,
+};
+
+const getStorage = (name) => {
   try {
-    const versionFile = '/version.json';
-    
-    // Fetch version.json dengan cache: "no-store" agar selalu fresh
-    const response = await fetch(`${versionFile}?t=${Date.now()}`, {
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
-    });
-
-    if (!response.ok) return;
-
-    const data = await response.json();
-    const newVersion = data.version;
-    const currentVersion = localStorage.getItem('app_version');
-
-    // Jika versi berbeda atau belum ada di localStorage
-    if (newVersion && currentVersion !== newVersion) {
-      console.log(`[Update] Versi baru terdeteksi: ${newVersion} (Versi lama: ${currentVersion || 'none'})`);
-
-      // 1. Clear PWA Cache
-      if ('caches' in window) {
-        const cacheNames = await caches.keys();
-        await Promise.all(cacheNames.map(name => caches.delete(name)));
-        console.log('[Update] Cache PWA dihapus');
-      }
-
-      // 2. Unregister Service Workers
-      if ('serviceWorker' in navigator) {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        for (const registration of registrations) {
-          await registration.unregister();
-        }
-        console.log('[Update] Service Worker di-unregister');
-        
-        // Kirim message ke SW yang sedang aktif (jika ada) untuk hapus cache
-        if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_PWA_CACHE' });
-        }
-      }
-
-      // 3. Clear Storage (Optional)
-      if (options.clearStorage) {
-        // Simpan versi baru dulu agar tidak kena clear
-        localStorage.setItem('app_version', newVersion);
-        
-        // Hapus sisanya
-        const itemsToKeep = ['app_version'];
-        const keys = Object.keys(localStorage);
-        keys.forEach(key => {
-          if (!itemsToKeep.includes(key)) {
-            localStorage.removeItem(key);
-          }
-        });
-        
-        sessionStorage.clear();
-        console.log('[Update] Local & Session Storage dibersihkan');
-      } else {
-        localStorage.setItem('app_version', newVersion);
-      }
-
-      // 4. Notify user dan reload HANYA jika form tidak sedang dirty
-      const isDirty = localStorage.getItem('kr:form-dirty') === '1';
-      if (isDirty) {
-        // Jangan reload otomatis jika user sedang mengisi form.
-        // Tandai ada update pending, reload akan terjadi setelah user submit atau manual refresh.
-        localStorage.setItem('kr:app-update-pending', newVersion);
-        console.log('[Update] Update pending, tidak reload karena form sedang diisi.');
-        return;
-      }
-      
-      // Beri sedikit delay agar proses storage selesai
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
-    }
-  } catch (error) {
-    console.error('[Update] Gagal mengecek update:', error);
+    return typeof window !== 'undefined' ? window[name] : null;
+  } catch {
+    return null;
   }
+};
+
+const readStoredVersion = () => getStorage('localStorage')?.getItem(VERSION_STORAGE_KEY) || null;
+
+const storeVersion = (version) => {
+  getStorage('localStorage')?.setItem(VERSION_STORAGE_KEY, version);
+};
+
+const storePendingVersion = (version) => {
+  getStorage('localStorage')?.setItem(PENDING_UPDATE_STORAGE_KEY, version);
+};
+
+const isFormDirty = () => {
+  const storage = getStorage('localStorage');
+  if (!storage) return false;
+  if (storage.getItem(LEGACY_FORM_DIRTY_KEY) === '1') return true;
+
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(FORM_DIRTY_STORAGE_PREFIX) && storage.getItem(key) === '1') return true;
+  }
+
+  return false;
+};
+
+/**
+ * Cancel the only reload this module can schedule. This is safe to call when
+ * no update is pending or while the application is being unmounted.
+ */
+export const cancelScheduledAppReload = () => {
+  state.lifecycleGeneration += 1;
+  if (state.reloadTimer !== null) {
+    clearTimeout(state.reloadTimer);
+    state.reloadTimer = null;
+  }
+};
+
+export const scheduleAppReload = (delay = 0, reloadImpl, versionToActivate = null) => {
+  cancelScheduledAppReload();
+  const generation = state.lifecycleGeneration;
+
+  state.reloadTimer = setTimeout(() => {
+    state.reloadTimer = null;
+    if (generation !== state.lifecycleGeneration || isFormDirty()) return;
+
+    if (versionToActivate) {
+      storeVersion(versionToActivate);
+      getStorage('localStorage')?.removeItem(PENDING_UPDATE_STORAGE_KEY);
+    }
+
+    const reload = reloadImpl || (() => window.location.reload());
+    if (typeof window !== 'undefined' && typeof reload === 'function') reload();
+  }, delay);
+
+  return () => {
+    if (generation === state.lifecycleGeneration) cancelScheduledAppReload();
+  };
+};
+
+export const getAppUpdateState = () => ({
+  currentVersion: readStoredVersion(),
+  pendingVersion: getStorage('localStorage')?.getItem(PENDING_UPDATE_STORAGE_KEY) || null,
+  reloadScheduled: state.reloadTimer !== null,
+});
+
+const fetchVersion = async (fetchImpl = globalThis.fetch) => {
+  if (typeof fetchImpl !== 'function') return null;
+  const response = await fetchImpl(`/version.json?t=${Date.now()}`, {
+    cache: 'no-store',
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  return typeof data?.version === 'string' && data.version.trim() ? data.version.trim() : null;
+};
+
+/**
+ * Detect a version change without making focus or visibility a reload trigger.
+ * The first successful check establishes a baseline and never reloads.
+ */
+export const checkAppUpdate = async ({ fetchImpl, scheduleReload = false, reloadImpl } = {}) => {
+  if (state.inFlight) return state.inFlight;
+  const requestGeneration = state.lifecycleGeneration;
+
+  state.inFlight = (async () => {
+    try {
+      const serverVersion = await fetchVersion(fetchImpl);
+      if (!serverVersion) return { status: 'unavailable' };
+
+      const currentVersion = readStoredVersion();
+      if (!currentVersion) {
+        storeVersion(serverVersion);
+        return { status: 'initialized', version: serverVersion };
+      }
+
+      if (currentVersion === serverVersion) {
+        getStorage('localStorage')?.removeItem(PENDING_UPDATE_STORAGE_KEY);
+        return { status: 'current', version: serverVersion };
+      }
+
+      storePendingVersion(serverVersion);
+      if (isFormDirty()) {
+        return { status: 'pending-form', version: serverVersion };
+      }
+
+      // Version activation is opt-in; the normal startup/visibility path only records it.
+      if (scheduleReload && requestGeneration === state.lifecycleGeneration) {
+        scheduleAppReload(0, reloadImpl, serverVersion);
+        return { status: 'reload-scheduled', version: serverVersion };
+      }
+
+      return { status: 'pending', version: serverVersion };
+    } catch (error) {
+      return { status: 'unavailable', error };
+    } finally {
+      state.inFlight = null;
+    }
+  })();
+
+  return state.inFlight;
+};
+
+export const resetAppUpdateStateForTests = () => {
+  cancelScheduledAppReload();
+  state.inFlight = null;
+};
+
+export const APP_UPDATE_STORAGE_KEYS = {
+  VERSION: VERSION_STORAGE_KEY,
+  PENDING: PENDING_UPDATE_STORAGE_KEY,
 };

@@ -1889,29 +1889,31 @@ const Pengeluaran = ({ onDataUpdate }) => {
 
   const handleExport = async (filters) => {
     try {
-      let query = supabase.from('pengeluaran').select('*').order('tanggal', { ascending: false });
+      let query = supabase
+        .from('pengeluaran')
+        .select('tanggal, category, apartment_location, room_number, nama_pengeluaran, jumlah, keterangan')
+        .order('tanggal', { ascending: false });
 
       if (filters.dateFrom) query = query.gte('tanggal', filters.dateFrom);
       if (filters.dateTo) query = query.lte('tanggal', filters.dateTo);
+      if (filters.categories.length > 0) {
+        if (filters.includeUncategorized) {
+          query = query.or(`category.in.(${filters.categories.join(',')}),category.is.null`);
+        } else {
+          query = query.in('category', filters.categories);
+        }
+      } else if (!filters.includeUncategorized) {
+        query = query.not('category', 'is', null);
+      }
+      if (filters.locations.length > 0) {
+        query = query.or(`apartment_location.in.(${filters.locations.join(',')}),apartment_location.is.null`);
+      }
 
       const { data, error } = await query;
       if (error) throw error;
 
       let filteredData = data || [];
 
-      // Filter by categories
-      if (filters.categories.length > 0) {
-        filteredData = filteredData.filter(e =>
-          (filters.includeUncategorized && !e.category) || filters.categories.includes(e.category)
-        );
-      } else if (!filters.includeUncategorized) {
-        filteredData = filteredData.filter(e => e.category);
-      }
-
-      // Filter by locations
-      if (filters.locations.length > 0) {
-        filteredData = filteredData.filter(e => !e.apartment_location || filters.locations.includes(e.apartment_location));
-      }
 
       if (filteredData.length === 0) {
         toast({ title: "Tidak ada data untuk diexport", variant: "destructive" });

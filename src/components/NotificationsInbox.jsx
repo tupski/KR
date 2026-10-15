@@ -6,6 +6,7 @@ import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 import PaginationControls from '@/components/PaginationControls';
 
 const PAGE_SIZE = 10;
@@ -119,7 +120,7 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
   };
 
   const load = async () => {
-    if (!userId || !audienceFilter) return;
+    if (!NOTIFICATIONS_ENABLED || !userId || !audienceFilter) return;
     setLoading(true);
     try {
       const from = (page - 1) * pageSize;
@@ -165,7 +166,7 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
   }, [load]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!NOTIFICATIONS_ENABLED || !open) return;
     load();
     const channel = supabase.channel(`notif_inbox_${userId || 'anon'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, debouncedLoad)
@@ -205,6 +206,8 @@ export default function NotificationsInbox({ open, onOpenChange, onOpenAll }) {
     e.stopPropagation();
     setExpandedIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   };
+
+  if (!NOTIFICATIONS_ENABLED) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -23,6 +23,7 @@ import AllNotifications from '@/components/AllNotifications';
 import AnnouncementBanner from '@/components/AnnouncementBanner';
 import ComposeAnnouncement from '@/components/ComposeAnnouncement';
 import { supabase } from '@/lib/customSupabaseClient';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 import AccountSettings from '@/components/AccountSettings';
 import KalenderLibur from '@/components/KalenderLibur';
 import {
@@ -93,7 +94,7 @@ function App() {
 
   useEffect(() => {
     const fetchSettings = async () => {
-      const { data } = await supabase.from('system_settings').select('*');
+      const { data } = await supabase.from('system_settings').select('key,value');
       if (data) {
         const m = data.find(s => s.key === 'maintenance_mode');
         const n = data.find(s => s.key === 'app_name');
@@ -200,6 +201,7 @@ function App() {
    * Skips refetch if document is not visible.
    */
   const refreshUnread = async () => {
+    if (!NOTIFICATIONS_ENABLED) return;
     const userId = session?.user?.id;
     if (!userId || !audienceFilter) return;
 
@@ -265,6 +267,7 @@ function App() {
   };
 
   useEffect(() => {
+    if (!NOTIFICATIONS_ENABLED) return;
     console.log('[App.jsx] useEffect — notification badge setup for user:', session?.user?.id);
     if (!session?.user?.id) return;
     refreshUnread();
@@ -508,7 +511,7 @@ function App() {
 
           <div className="flex items-center gap-2 shrink-0">
             {/* Megaphone: hanya admin/superadmin */}
-            {(userRole === 'admin' || userRole === 'super_admin') && (
+            {NOTIFICATIONS_ENABLED && (userRole === 'admin' || userRole === 'super_admin') && (
               <button
                 type="button"
                 onClick={() => setShowCompose(true)}
@@ -526,19 +529,21 @@ function App() {
             >
               <CalendarDays className="h-5 w-5 text-white" />
             </button>
-            <button
-              type="button"
-              onClick={() => setShowInbox(true)}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 ring-offset-2 transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-              aria-label="Notifikasi"
-            >
-              <Bell className="h-5 w-5 text-white" />
-              {unreadCount > 0 && (
-                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </span>
-              )}
-            </button>
+            {NOTIFICATIONS_ENABLED && (
+              <button
+                type="button"
+                onClick={() => setShowInbox(true)}
+                className="relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 ring-offset-2 transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                aria-label="Notifikasi"
+              >
+                <Bell className="h-5 w-5 text-white" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -583,18 +588,24 @@ function App() {
       </header>
 
       {/* Announcement banner — below sticky header, visible to all */}
-      <div className="sticky top-[57px] z-40">
-        <AnnouncementBanner />
-      </div>
+      {NOTIFICATIONS_ENABLED && (
+        <div className="sticky top-[57px] z-40">
+          <AnnouncementBanner />
+        </div>
+      )}
 
-      <NotificationsInbox
-        open={showInbox}
-        onOpenChange={setShowInbox}
-        onOpenAll={() => setShowAllNotifications(true)}
-      />
-      <AllNotifications open={showAllNotifications} onOpenChange={setShowAllNotifications} />
+      {NOTIFICATIONS_ENABLED && (
+        <NotificationsInbox
+          open={showInbox}
+          onOpenChange={setShowInbox}
+          onOpenAll={() => setShowAllNotifications(true)}
+        />
+      )}
+      {NOTIFICATIONS_ENABLED && (
+        <AllNotifications open={showAllNotifications} onOpenChange={setShowAllNotifications} />
+      )}
       <AccountSettings open={showAccountSettings} onOpenChange={setShowAccountSettings} />
-      <ComposeAnnouncement open={showCompose} onOpenChange={setShowCompose} />
+      {NOTIFICATIONS_ENABLED && <ComposeAnnouncement open={showCompose} onOpenChange={setShowCompose} />}
       <KalenderLibur open={showKalender} onOpenChange={setShowKalender} showTagihan={userRole === 'admin' || userRole === 'super_admin'} />
 
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

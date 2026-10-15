@@ -231,7 +231,7 @@ const DashboardPemasukan = () => {
       if (document.visibilityState === 'visible') {
         refreshDashboardData();
       }
-    }, 15000);
+    }, 60000);
 
     // Debounce visibility refetch agar tidak trigger instan saat alt+tab
     let visibilityTimer = null;

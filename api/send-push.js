@@ -39,6 +39,10 @@ async function fetchSubscriptions(supabase, userIds) {
 }
 
 export async function sendPushToAudience({ title, body, url = '/', icon = '/kr-icon-192.svg', audience_role, audience_user_id }) {
+  if (process.env.NOTIFICATIONS_ENABLED === 'false') {
+    return { attempted: 0, sent: 0, failed: 0, failures: [], disabled: true };
+  }
+
   const supabase = getSupabaseAdmin();
   if (!supabase) throw new Error('Supabase admin env belum lengkap.');
   if (!configWebPush()) throw new Error('VAPID env belum lengkap.');

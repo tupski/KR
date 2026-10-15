@@ -9,11 +9,8 @@ import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { checkAppUpdate } from '@/utils/checkAppUpdate';
 
-// Cek update aplikasi setelah render — jangan block render & jangan clear storage saat startup
-// Ini mencegah reload otomatis saat user baru buka app dan form belum tersimpan
-setTimeout(() => {
-  checkAppUpdate({ clearStorage: false });
-}, 5000);
+// Establish the version baseline without delaying or reloading the current page.
+void checkAppUpdate();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>

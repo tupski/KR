@@ -199,16 +199,17 @@ export const MENU_ITEMS = [
     roles: ['admin', 'super_admin'],
     description: 'Kendali keamanan dan akses'
   },
-  {
-    id: 'notification-settings',
-    name: 'Notifikasi',
-    icon: Bell,
-    path: '/notification-settings',
-    category: MENU_CATEGORIES.SETTINGS,
-    priority: 3,
-    roles: ['karyawan', 'admin', 'super_admin'],
-    description: 'Preferensi notifikasi'
-  },
+  // Notifikasi dinonaktifkan sementara; pertahankan implementasi untuk aktivasi berikutnya.
+  // {
+  //   id: 'notification-settings',
+  //   name: 'Notifikasi',
+  //   icon: Bell,
+  //   path: '/notification-settings',
+  //   category: MENU_CATEGORIES.SETTINGS,
+  //   priority: 3,
+  //   roles: ['karyawan', 'admin', 'super_admin'],
+  //   description: 'Preferensi notifikasi'
+  // },
   {
     id: 'backup-restore',
     name: 'Backup & Restore',

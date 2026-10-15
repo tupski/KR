@@ -71,7 +71,7 @@ const UserManagement = () => {
       // Ambil profil pengguna beserta peran (aman untuk frontend tanpa endpoint admin)
       const { data: profiles, error: profileError } = await supabase
         .from('user_profiles')
-        .select('*');
+        .select('id, email, full_name, phone, role');
 
       if (profileError) throw profileError;
 

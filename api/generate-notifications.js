@@ -178,6 +178,10 @@ function detectLongHoliday(holidayMap, fromDate) {
 }
 
 export default async function handler(req, res) {
+  if (process.env.NOTIFICATIONS_ENABLED === 'false') {
+    return res.status(503).json({ ok: false, disabled: true, message: 'Notifikasi sedang dinonaktifkan sementara.' });
+  }
+
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method tidak diizinkan.' });
   }

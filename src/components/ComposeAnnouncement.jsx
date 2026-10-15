@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 
 /**
  * ComposeAnnouncement
@@ -18,7 +19,7 @@ const ComposeAnnouncement = ({ open, onOpenChange }) => {
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (!open) return null;
+  if (!NOTIFICATIONS_ENABLED || !open) return null;
 
   const handleSend = async () => {
     if (!body.trim()) {

@@ -1,145 +1,137 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, TrendingUp, Users } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Loader2, TrendingUp, Users } from 'lucide-react';
 import { supabase } from '@/lib/customSupabaseClient';
 
 const ITEMS_PER_PAGE = 10;
-
 const ID_MONTHS = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
 ];
 
-function toMonthKey(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function getMonthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function formatMonthLabel(ym) {
-  if (!ym) return '';
-  const [y, m] = ym.split('-').map(Number);
-  if (!y || !m) return ym;
-  return `${ID_MONTHS[m - 1] || m} ${y}`;
+function getMonthBounds(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const nextMonth = new Date(year, month, 1);
+  const endDate = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+  return { startDate, endDate };
 }
 
-function currentMonthKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function getMonthLabel(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number);
+  return `${ID_MONTHS[month - 1]} ${year}`;
 }
 
 const RankingMarketing = () => {
-  const [rows, setRows] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState(null);
+  const currentMonth = useMemo(() => getMonthKey(), []);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [rankings, setRankings] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalCs, setTotalCs] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-
-  const loadRankings = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at');
-    if (error) {
-      console.error('Error fetching rankings:', error);
-      return;
-    }
-    setRows(data || []);
-  };
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadRankings = async () => {
+      setIsLoading(true);
+      setError(null);
+      setRankings([]);
+      setTotalCount(0);
+      setTotalCs(0);
+
+      const { startDate, endDate } = getMonthBounds(selectedMonth);
+      const { data, error: queryError } = await supabase.rpc('get_marketing_ranking', {
+        p_start_date: startDate,
+        p_end_date: endDate,
+        p_limit: ITEMS_PER_PAGE,
+        p_offset: (currentPage - 1) * ITEMS_PER_PAGE,
+      });
+
+      if (cancelled) return;
+      if (queryError) {
+        console.error('Error fetching rankings:', queryError);
+        setError('Ranking marketing gagal dimuat. Coba pilih bulan lagi.');
+        setIsLoading(false);
+        return;
+      }
+
+      const nextRankings = (data || []).map((row) => ({
+        nama: row.marketing_name,
+        jumlahTransaksi: Number(row.total_transactions || 0),
+        totalPemasukan: Number(row.total_revenue || 0),
+      }));
+      setRankings(nextRankings);
+      setTotalCount(Number(data?.[0]?.total_count || 0));
+      setTotalCs(Number(data?.[0]?.total_cs || 0));
+      setIsLoading(false);
+    };
+
     loadRankings();
-    const interval = setInterval(loadRankings, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth, currentPage]);
 
-  const monthKeys = useMemo(() => {
-    const set = new Set();
-    (rows || []).forEach((t) => {
-      const k = toMonthKey(t.checkin_at || t.created_at);
-      if (k) set.add(k);
-    });
-    return ['all', ...[...set].sort().reverse()];
-  }, [rows]);
+  const totalMarketingAktif = totalCount;
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
+  const statsPeriodLabel = getMonthLabel(selectedMonth);
 
   useEffect(() => {
-    if (monthKeys.length === 0) {
-      setSelectedMonth(null);
-      return;
-    }
-    setSelectedMonth((prev) => (prev && monthKeys.includes(prev) ? prev : 'all'));
-  }, [monthKeys]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedMonth]);
+    setCurrentPage((page) => Math.min(Math.max(1, page), totalPages));
+  }, [totalPages]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [currentPage]);
 
-  const filteredRows = useMemo(() => {
-    if (!selectedMonth) return [];
-    if (selectedMonth === 'all') return rows || [];
-    return (rows || []).filter((t) => toMonthKey(t.checkin_at || t.created_at) === selectedMonth);
-  }, [rows, selectedMonth]);
+  const formatRupiah = (amount) =>
+    new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+    }).format(amount);
 
-  const rankings = useMemo(() => {
-    const marketingStats = filteredRows.reduce((acc, t) => {
-      const name = t.marketing_name;
-      if (!name) return acc;
-      if (!acc[name]) {
-        acc[name] = { nama: name, jumlahTransaksi: 0, totalPemasukan: 0 };
-      }
-      acc[name].jumlahTransaksi += 1;
-      acc[name].totalPemasukan += (t.cash_amount || 0) + (t.transfer_amount || 0);
-      return acc;
-    }, {});
-
-    return Object.values(marketingStats).sort((a, b) => b.jumlahTransaksi - a.jumlahTransaksi);
-  }, [filteredRows]);
-
-  const formatRupiah = (angka) =>
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka);
-
-  const statsPeriodLabel =
-    selectedMonth === 'all'
-      ? 'Keseluruhan'
-      : selectedMonth && selectedMonth === currentMonthKey()
-        ? 'Bulan ini'
-        : formatMonthLabel(selectedMonth || '');
-
-  const totalMarketingAktif = rankings.length;
-  const totalCs = rankings.reduce((sum, r) => sum + r.jumlahTransaksi, 0);
-
-  const totalPages = Math.max(1, Math.ceil(rankings.length / ITEMS_PER_PAGE));
-
-  useEffect(() => {
-    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [totalPages]);
-
-  const paginatedRankings = rankings.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const handleMonthChange = (event) => {
+    setSelectedMonth(event.target.value || currentMonth);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 pt-5 pb-28">
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-md space-y-4">
         <div className="text-center">
           <h1 className="text-lg font-semibold text-slate-800">Ranking Marketing</h1>
-          {monthKeys.length > 0 && (
-            <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-slate-500">Filter bulan</label>
-              <select
-                value={selectedMonth || ''}
-                onChange={(e) => setSelectedMonth(e.target.value || null)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-400"
-              >
-                {monthKeys.map((mk) => (
-                  <option key={mk} value={mk}>
-                    {mk === 'all' ? 'Keseluruhan' : formatMonthLabel(mk)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <p className="mt-1 text-xs text-slate-500">Bandingkan hasil per bulan</p>
         </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <label htmlFor="ranking-marketing-month" className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-700">
+            <CalendarDays className="h-4 w-4 text-slate-500" />
+            Periode ranking
+          </label>
+          <input
+            id="ranking-marketing-month"
+            type="month"
+            value={selectedMonth}
+            max={currentMonth}
+            onChange={handleMonthChange}
+            className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20"
+          />
+          <p className="mt-2 text-xs text-slate-500">Bulan lain hanya dibaca setelah dipilih.</p>
+        </div>
+
+        {error && (
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
@@ -149,7 +141,7 @@ const RankingMarketing = () => {
               </div>
               <div className="min-w-0">
                 <p className="truncate text-xs text-slate-500">Marketing Aktif ({statsPeriodLabel})</p>
-                <p className="text-lg font-semibold tabular-nums text-slate-900">{totalMarketingAktif}</p>
+                <p className="text-lg font-semibold tabular-nums text-slate-900">{isLoading ? '...' : error ? '—' : totalMarketingAktif}</p>
               </div>
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -158,15 +150,20 @@ const RankingMarketing = () => {
               </div>
               <div className="min-w-0 text-right">
                 <p className="truncate text-xs text-slate-500">Total CS ({statsPeriodLabel})</p>
-                <p className="text-lg font-semibold tabular-nums text-slate-900">{totalCs}</p>
+                <p className="text-lg font-semibold tabular-nums text-slate-900">{isLoading ? '...' : error ? '—' : totalCs}</p>
               </div>
             </div>
           </div>
         </div>
 
-        {rankings.length > 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500" role="status" aria-live="polite">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Memuat ranking {statsPeriodLabel}...
+          </div>
+        ) : error ? null : rankings.length > 0 ? (
           <div className="space-y-2">
-            {paginatedRankings.map((marketing, index) => {
+            {rankings.map((marketing, index) => {
               const absoluteIndex = (currentPage - 1) * ITEMS_PER_PAGE + index;
               const accent = absoluteIndex % 2 === 0 ? 'border-l-blue-600' : 'border-l-emerald-600';
               const bg = absoluteIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50';
@@ -195,29 +192,27 @@ const RankingMarketing = () => {
             })}
           </div>
         ) : (
-          <p className="py-8 text-center text-sm text-slate-500">
-            {monthKeys.length === 0 ? 'Belum ada data transaksi.' : 'Tidak ada transaksi di bulan ini.'}
+          <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+            Tidak ada transaksi di {statsPeriodLabel}.
           </p>
         )}
 
-        {rankings.length > ITEMS_PER_PAGE && (
+        {totalCount > ITEMS_PER_PAGE && (
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
             <button
               type="button"
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+              onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
               disabled={currentPage <= 1}
-              className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-40"
+              className="inline-flex min-h-11 items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ChevronLeft className="mr-0.5 h-4 w-4" /> Sebelumnya
             </button>
-            <p className="text-xs font-medium text-slate-600">
-              Halaman {currentPage} / {totalPages}
-            </p>
+            <p className="text-xs font-medium text-slate-600">Halaman {currentPage} / {totalPages}</p>
             <button
               type="button"
-              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+              onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
               disabled={currentPage >= totalPages}
-              className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-40"
+              className="inline-flex min-h-11 items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Berikutnya <ChevronRight className="ml-0.5 h-4 w-4" />
             </button>

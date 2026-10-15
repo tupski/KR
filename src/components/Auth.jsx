@@ -72,13 +72,26 @@ const Auth = () => {
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-            toast({ variant: "destructive", title: "Login Gagal!", description: error.message });
-        } else {
-            toast({ title: "Login Berhasil!" });
+
+        try {
+            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) {
+                toast({ variant: "destructive", title: "Login Gagal!", description: error.message });
+            } else {
+                toast({ title: "Login Berhasil!" });
+            }
+        } catch (error) {
+            const isNetworkError = error instanceof TypeError && error.message === 'Failed to fetch';
+            toast({
+                variant: "destructive",
+                title: "Koneksi Supabase gagal",
+                description: isNetworkError
+                    ? "Endpoint Supabase tidak dapat dijangkau. Periksa VITE_SUPABASE_URL, key publishable, DNS, lalu restart server Vite."
+                    : error?.message || "Permintaan login gagal.",
+            });
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     return (

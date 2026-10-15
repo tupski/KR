@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Megaphone, X } from 'lucide-react';
 import { supabase } from '@/lib/customSupabaseClient';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 /**
@@ -16,6 +17,7 @@ const AnnouncementBanner = () => {
   const [showFullModal, setShowFullModal] = useState(false);
 
   const fetchAnnouncement = useCallback(async () => {
+    if (!NOTIFICATIONS_ENABLED) return;
     const { data, error } = await supabase
       .from('notifications')
       .select('id, title, body, created_at')
@@ -38,6 +40,7 @@ const AnnouncementBanner = () => {
   }, []);
 
   useEffect(() => {
+    if (!NOTIFICATIONS_ENABLED) return undefined;
     fetchAnnouncement();
 
     const channel = supabase

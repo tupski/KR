@@ -9,6 +9,7 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { formatWibDateTime } from '@/lib/formatWib';
 import NotificationPreferences from '@/components/NotificationPreferences';
+import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
 
 const PAGE_SIZE = 30;
 
@@ -104,7 +105,7 @@ export default function AllNotifications({ open, onOpenChange }) {
   };
 
   const load = async () => {
-    if (!userId || !audienceFilter) return;
+    if (!NOTIFICATIONS_ENABLED || !userId || !audienceFilter) return;
     setLoading(true);
     try {
       const from = (page - 1) * PAGE_SIZE;
@@ -159,7 +160,7 @@ export default function AllNotifications({ open, onOpenChange }) {
   }, [load]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!NOTIFICATIONS_ENABLED || !open) return;
     load();
     const channel = supabase
       .channel(`all_notif_${userId || 'anon'}`)
@@ -225,6 +226,8 @@ export default function AllNotifications({ open, onOpenChange }) {
   };
 
   const selectionIds = [...selectedIds];
+
+  if (!NOTIFICATIONS_ENABLED) return null;
 
   return (
     <>

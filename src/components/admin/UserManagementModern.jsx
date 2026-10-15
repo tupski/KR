@@ -73,17 +73,17 @@ const UserManagementModern = () => {
       setLoading(true);
       const { data: profiles, error } = await supabase
         .from('user_profiles')
-        .select('*')
+        .select('id, email, full_name, phone, gender, role, created_at')
         .neq('role', 'super_admin') // Hanya karyawan & admin
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setUsers(profiles || []);
 
-      const { data: locs } = await supabase.from('lokasi_apartemen').select('*').order('name');
+      const { data: locs } = await supabase.from('lokasi_apartemen').select('name').order('name');
       setLocations(locs || []);
       
-      const { data: assigns } = await supabase.from('user_location_assignments').select('*');
+      const { data: assigns } = await supabase.from('user_location_assignments').select('user_id, location_name');
       setUserAssignments(assigns || []);
     } catch (error) {
       toast({ title: "Gagal memuat data", description: error.message, variant: "destructive" });
@@ -211,7 +211,10 @@ const UserManagementModern = () => {
   };
 
   const refreshAllAssignments = async () => {
-    const { data, error } = await supabase.from('user_location_assignments').select('*').order('id', { ascending: true });
+    const { data, error } = await supabase
+      .from('user_location_assignments')
+      .select('user_id, location_name')
+      .order('id', { ascending: true });
     if (error) throw error;
     setUserAssignments(data || []);
   };
