@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDisableAutoReload } from '@/hooks/usePageVisibility';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, Camera, CalendarDays, Megaphone, TrendingUp, Trophy, PieChart, DoorOpen, FileText, Send, MoreHorizontal, Settings, LogOut, BarChart2 } from 'lucide-react';
+import { Bell, Camera, CalendarDays, Megaphone, TrendingUp, DoorOpen, FileText, Send, MoreHorizontal, Settings, LogOut } from 'lucide-react';
 import FormTransaksi from '@/components/FormTransaksiModern';
 import KaryawanTransaksi from '@/components/KaryawanTransaksi';
 import DashboardPemasukan from '@/components/DashboardPemasukan';
-import RankingMarketing from '@/components/RankingMarketing';
-import OmsetChart from '@/components/OmsetChart';
 import KetersediaanKamar from '@/components/KetersediaanKamar';
 import HalamanTagihan from '@/components/HalamanTagihan';
 import HalamanRequest from '@/components/HalamanRequest';
@@ -321,8 +319,6 @@ function App() {
     { id: 'request', label: 'Permintaan', icon: Send },
     { id: 'kamar', label: 'Kamar', icon: DoorOpen },
     { id: 'finance', label: 'Keuangan', icon: FileText },
-    { id: 'ranking', label: 'Ranking', icon: Trophy },
-    { id: 'chart', label: 'Grafik', icon: PieChart },
     { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
   ];
 
@@ -345,7 +341,7 @@ function App() {
         .map((id) => visibleTabs.find((tab) => tab.id === id))
         .filter(Boolean);
     }
-    const preferred = ['dashboard', 'kamar', 'finance'];
+    const preferred = ['dashboard', 'kamar', 'finance', 'request'];
     return preferred
       .map((id) => visibleTabs.find((tab) => tab.id === id))
       .filter(Boolean);
@@ -410,10 +406,6 @@ function App() {
         return userRole === 'admin' || userRole === 'super_admin'
           ? <HalamanTagihan key={activeTab} />
           : null;
-      case 'ranking':
-        return <RankingMarketing key={activeTab} />;
-      case 'chart':
-        return <OmsetChart key={activeTab} />;
       case 'pengaturan':
         return isSuperAdmin ? <SuperAdminDashboard key={activeTab} /> : <FormTransaksi key={activeTab} onDataUpdate={() => { }} />;
       default:

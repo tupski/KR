@@ -34,7 +34,7 @@
  *                            `admin`: all tabs except `'pengaturan'`,
  *                            `super_admin`: all tabs.
  *   - `primaryTabs`       — `karyawan → ['kamar', 'request']`,
- *                            else → `['dashboard', 'kamar', 'finance']`.
+ *                            else → `['dashboard', 'kamar', 'finance', 'request']`.
  *   - `secondaryTabs`     — `karyawan → []`,
  *                            else → visibleTabs filtered by removing
  *                            primaryTabs ids and `'form'`.
@@ -53,8 +53,6 @@ const allTabs = [
   { id: 'request', label: 'Permintaan' },
   { id: 'kamar', label: 'Kamar' },
   { id: 'finance', label: 'Keuangan' },
-  { id: 'ranking', label: 'Ranking' },
-  { id: 'chart', label: 'Grafik' },
   { id: 'analytics', label: 'Analitik' },
   { id: 'pengaturan', label: 'Pengaturan' },
 ];
@@ -68,7 +66,7 @@ const allowedTabsByRole = {
 const primaryTabIdsByRole = (role) =>
   role === 'karyawan'
     ? ['kamar', 'request']
-    : ['dashboard', 'kamar', 'finance'];
+    : ['dashboard', 'kamar', 'finance', 'request'];
 
 /**
  * Mirrors the `secondaryTabs` useMemo in App.jsx.
