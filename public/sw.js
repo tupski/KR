@@ -56,7 +56,11 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cloned));
           return response;
         })
-        .catch(() => caches.match('/index.html'));
+        .catch(() =>
+          event.request.mode === 'navigate'
+            ? caches.match('/index.html').then((fallback) => fallback || Response.error())
+            : Response.error(),
+        );
     }),
   );
 });
@@ -102,6 +106,12 @@ self.addEventListener('notificationclick', (event) => {
 
 // Handle messages from frontend
 self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    // Dipicu manual oleh user lewat prompt update. Hanya SW ini yang activate.
+    self.skipWaiting();
+    return;
+  }
+
   if (event.data && event.data.type === 'CLEAR_PWA_CACHE') {
     console.log('[SW] Menerima perintah CLEAR_PWA_CACHE');
     event.waitUntil(
