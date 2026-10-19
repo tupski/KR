@@ -14,9 +14,6 @@ import SuperAdminDashboard from '@/components/SuperAdminDashboard';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import Auth from '@/components/Auth';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { toast } from '@/components/ui/use-toast';
-import PinInput from '@/components/PinInput';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import NotificationsInbox from '@/components/NotificationsInbox';
 import AllNotifications from '@/components/AllNotifications';
@@ -63,18 +60,14 @@ function App() {
   // Refs for notification fetch throttling/debouncing
   const notifFetchTimerRef = useRef(null);
   const lastNotifFetchRef = useRef(0);
-  const [showPinModal, setShowPinModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [showAllNotifications, setShowAllNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
-  const [isTagihanUnlocked, setIsTagihanUnlocked] = useState(false);
   const [showMoreMenus, setShowMoreMenus] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
   const [showKalender, setShowKalender] = useState(false);
-  const correctPin = '212198';
-
   const [isMaintenance, setIsMaintenance] = useState(false);
   const [appName, setAppName] = useState('Kakarama Room');
 
@@ -319,23 +312,7 @@ function App() {
 
   const handleTabClick = (tabId) => {
     setShowMoreMenus(false);
-    if (tabId === 'finance' && userRole === 'admin' && !isTagihanUnlocked) {
-      setShowPinModal(true);
-      return;
-    }
     setActiveTab(tabId);
-  };
-
-  const handlePinComplete = (enteredPin) => {
-    if (enteredPin === correctPin) {
-      toast({ title: 'Akses Diberikan!', description: 'Selamat datang di Menu Keuangan.', className: 'bg-green-500 text-white' });
-      setIsTagihanUnlocked(true);
-      setActiveTab('finance');
-      setShowPinModal(false);
-    } else {
-      toast({ title: 'PIN Salah!', description: 'Silakan coba lagi.', variant: 'destructive' });
-      setShowPinModal(false);
-    }
   };
 
   const allTabs = [
@@ -430,7 +407,9 @@ function App() {
       case 'kamar':
         return <KetersediaanKamar key={activeTab} />;
       case 'finance':
-        return userRole === 'super_admin' || isTagihanUnlocked ? <HalamanTagihan key={activeTab} /> : null;
+        return userRole === 'admin' || userRole === 'super_admin'
+          ? <HalamanTagihan key={activeTab} />
+          : null;
       case 'ranking':
         return <RankingMarketing key={activeTab} />;
       case 'chart':
@@ -627,20 +606,6 @@ function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={showPinModal} onOpenChange={setShowPinModal}>
-        <DialogContent className="bg-white">
-          <DialogHeader>
-            <DialogTitle className="text-center text-2xl font-bold">Masukkan PIN</DialogTitle>
-            <DialogDescription className="text-center">
-              Halaman ini dilindungi. Masukkan PIN 6 digit untuk melanjutkan.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-6">
-            <PinInput onComplete={handlePinComplete} />
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <div className="min-h-screen pb-28 sm:pb-32">
         {/* FIX: Ganti AnimatePresence mode="popLayout" dengan mode="sync" untuk mencegah

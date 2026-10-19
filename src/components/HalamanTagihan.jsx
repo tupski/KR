@@ -56,9 +56,18 @@ const formatLunasDateTimeWib = (iso) => {
 };
 
 const HalamanTagihan = () => {
+  const { userRole } = useAuth();
+  const isAdminOnly = userRole === 'admin';
   const [activeMenu, setActiveMenu] = useState('bulanan');
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [monthlySummary, setMonthlySummary] = useState({ pemasukan: 0, pengeluaran: 0, laba: 0 });
+
+  // Admin hanya boleh melihat tagihan fee — paksa sub-menu 'fee' saat role resolves.
+  useEffect(() => {
+    if (isAdminOnly) setActiveMenu('fee');
+  }, [isAdminOnly]);
+
+  const effectiveMenu = isAdminOnly ? 'fee' : activeMenu;
 
   const formatRupiah = (value) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value || 0);
 
@@ -92,6 +101,10 @@ const HalamanTagihan = () => {
   }, [calculateSummary]);
 
   useEffect(() => {
+    if (isAdminOnly) {
+      setMonthlySummary({ pemasukan: 0, pengeluaran: 0, laba: 0 });
+      return;
+    }
     calculateSummary();
     const realtimeChannel = supabase.channel('public:finance_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, debouncedCalculateSummary)
@@ -101,7 +114,7 @@ const HalamanTagihan = () => {
       .subscribe();
 
     return () => { supabase.removeChannel(realtimeChannel); };
-  }, [debouncedCalculateSummary]);
+  }, [debouncedCalculateSummary, isAdminOnly]);
 
   return (
     <div className="min-h-screen p-4 pt-6 pb-28">
@@ -109,55 +122,59 @@ const HalamanTagihan = () => {
         <div className="text-center mb-6">
           <div className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-full shadow-lg">
             <FileText className="w-6 h-6" />
-            <h1 className="text-xl font-bold">Menu Finance</h1>
+            <h1 className="text-xl font-bold">{isAdminOnly ? 'Keuangan — Tagihan Fee' : 'Menu Finance'}</h1>
           </div>
         </div>
 
-        <div className="glassmorphic-card p-4 space-y-3">
-          <div className="flex justify-between items-center">
-            <h2 className="text-gray-800 font-bold">Ringkasan Bulanan</h2>
-            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-white/50 border-gray-300 border-2 rounded-lg px-2 py-1 text-gray-800 text-sm" />
+        {!isAdminOnly && (
+          <div className="glassmorphic-card p-4 space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-gray-800 font-bold">Ringkasan Bulanan</h2>
+              <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-white/50 border-gray-300 border-2 rounded-lg px-2 py-1 text-gray-800 text-sm" />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="bg-green-100 p-2 rounded-lg">
+                <p className="text-xs text-green-800">Pemasukan</p>
+                <p className="text-green-900 font-bold text-sm">{formatRupiah(monthlySummary.pemasukan)}</p>
+              </div>
+              <div className="bg-red-100 p-2 rounded-lg">
+                <p className="text-xs text-red-800">Pengeluaran</p>
+                <p className="text-red-900 font-bold text-sm">{formatRupiah(monthlySummary.pengeluaran)}</p>
+              </div>
+              <div className="bg-blue-100 p-2 rounded-lg">
+                <p className="text-xs text-blue-800">Laba Bersih</p>
+                <p className="text-blue-900 font-bold text-sm">{formatRupiah(monthlySummary.laba)}</p>
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="bg-green-100 p-2 rounded-lg">
-              <p className="text-xs text-green-800">Pemasukan</p>
-              <p className="text-green-900 font-bold text-sm">{formatRupiah(monthlySummary.pemasukan)}</p>
-            </div>
-            <div className="bg-red-100 p-2 rounded-lg">
-              <p className="text-xs text-red-800">Pengeluaran</p>
-              <p className="text-red-900 font-bold text-sm">{formatRupiah(monthlySummary.pengeluaran)}</p>
-            </div>
-            <div className="bg-blue-100 p-2 rounded-lg">
-              <p className="text-xs text-blue-800">Laba Bersih</p>
-              <p className="text-blue-900 font-bold text-sm">{formatRupiah(monthlySummary.laba)}</p>
-            </div>
-          </div>
-        </div>
+        )}
 
-        <div className="grid grid-cols-4 gap-1 p-1 rounded-full bg-black/10">
-          <button onClick={() => setActiveMenu('bulanan')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'bulanan' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
-            Tgh. Unit
-          </button>
-          <button onClick={() => setActiveMenu('fee')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'fee' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
-            Tgh. Fee
-          </button>
-          <button onClick={() => setActiveMenu('pengeluaran')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'pengeluaran' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
-            Pengeluaran
-          </button>
-          <button onClick={() => setActiveMenu('pengeluaranUnit')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'pengeluaranUnit' ? 'bg-gradient-to-r from-orange-400 to-red-500 text-white shadow-lg' : 'text-gray-700'}`}>
-            Per Unit
-          </button>
-        </div>
+        {!isAdminOnly && (
+          <div className="grid grid-cols-4 gap-1 p-1 rounded-full bg-black/10">
+            <button onClick={() => setActiveMenu('bulanan')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'bulanan' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
+              Tgh. Unit
+            </button>
+            <button onClick={() => setActiveMenu('fee')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'fee' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
+              Tgh. Fee
+            </button>
+            <button onClick={() => setActiveMenu('pengeluaran')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'pengeluaran' ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg' : 'text-gray-700'}`}>
+              Pengeluaran
+            </button>
+            <button onClick={() => setActiveMenu('pengeluaranUnit')} className={`py-2 px-2 rounded-full text-xs font-semibold transition-all duration-300 ${activeMenu === 'pengeluaranUnit' ? 'bg-gradient-to-r from-orange-400 to-red-500 text-white shadow-lg' : 'text-gray-700'}`}>
+              Per Unit
+            </button>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeMenu}
+            key={effectiveMenu}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
           >
-            {activeMenu === 'bulanan' ? <TagihanBulanan onDataUpdate={handleDataUpdate} /> : activeMenu === 'fee' ? <TagihanFee onDataUpdate={handleDataUpdate} /> : activeMenu === 'pengeluaranUnit' ? <PengeluaranUnit onDataUpdate={handleDataUpdate} /> : <Pengeluaran onDataUpdate={handleDataUpdate} />}
+            {effectiveMenu === 'bulanan' ? <TagihanBulanan onDataUpdate={handleDataUpdate} /> : effectiveMenu === 'fee' ? <TagihanFee onDataUpdate={handleDataUpdate} /> : effectiveMenu === 'pengeluaranUnit' ? <PengeluaranUnit onDataUpdate={handleDataUpdate} /> : <Pengeluaran onDataUpdate={handleDataUpdate} />}
           </motion.div>
         </AnimatePresence>
       </motion.div>
