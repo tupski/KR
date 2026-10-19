@@ -1,43 +1,33 @@
 /**
  * Property-Based Tests for App.jsx — Navigation by Role
  *
- * Feature: analytics-dashboard
- * Property 1: Akses menu Analitik berdasarkan role
+ * Feature: role-based navigation
+ * Property 1: Menu sekunder sesuai role
+ * Property 2: Redirect tab yang tidak diizinkan
  *
  * For any user role drawn from {'admin', 'super_admin', 'karyawan'}, the
- * "Analitik" tab SHALL appear in `secondaryTabs` for `admin` / `super_admin`
- * and SHALL NOT appear for `karyawan`.
+ * visible tab set, the primary tab set, and the secondary ("Lainnya") tab set
+ * SHALL match the derivation in `src/App.jsx`.
  *
- * Validates: Requirements 1.1, 1.3
- *
- * --------------------------------------------------------------------------
- * Implementation note — pure function approach
- * --------------------------------------------------------------------------
- * Rendering the full <App /> component requires mocking many heavy children
- * (FormTransaksiModern, KaryawanTransaksi, DashboardPemasukan, OmsetChart,
- *  KetersediaanKamar, HalamanTagihan, HalamanRequest, SuperAdminDashboard,
- *  AnalyticsDashboard, NotificationsInbox, AccountSettings, KalenderLibur,
- *  AnnouncementBanner, ComposeAnnouncement, …) plus the SupabaseAuthContext,
- * the Supabase client, framer-motion timers, and Radix portals — all so we
- * can read back a tab list that is derived purely from `userRole`.
- *
- * Per the task's recommended alternative, this test instead replicates the
- * `secondaryTabs` derivation as a pure function, mirroring the source of
- * truth in `src/App.jsx`. Any change to that derivation in App.jsx must be
- * mirrored here, and vice versa.
+ * Implementation note — pure function approach:
+ * Rendering the full <App /> component would require mocking many heavy
+ * children plus SupabaseAuthContext, the Supabase client, framer-motion timers
+ * and Radix portals, only to read back a tab list derived purely from
+ * `userRole`. This test therefore replicates the tab derivation as pure
+ * functions, mirroring the source of truth in `src/App.jsx`. Any change to
+ * that derivation in App.jsx must be mirrored here, and vice versa.
  *
  * Source of truth in App.jsx (as of this test):
- *   - `allTabs`           — see App.jsx around the `const allTabs = [...]`
- *                            declaration (includes `{ id: 'analytics',
- *                            label: 'Analitik', icon: BarChart2 }`).
- *   - `allowedTabsByRole` — `karyawan: ['form', 'kamar', 'request']`,
- *                            `admin`: all tabs except `'pengaturan'`,
- *                            `super_admin`: all tabs.
- *   - `primaryTabs`       — `karyawan → ['kamar', 'request']`,
- *                            else → `['dashboard', 'kamar', 'finance', 'request']`.
- *   - `secondaryTabs`     — `karyawan → []`,
- *                            else → visibleTabs filtered by removing
- *                            primaryTabs ids and `'form'`.
+ *   allTabs           — form, dashboard, request, kamar, finance, ranking,
+ *                       chart, pengaturan.
+ *   allowedTabsByRole — karyawan: ['form', 'kamar', 'request'];
+ *                       admin: all tabs except 'pengaturan', 'ranking',
+ *                       'chart'; super_admin: all tabs.
+ *   primaryTabs       — karyawan → ['kamar', 'request'];
+ *                       admin → ['dashboard', 'kamar', 'finance', 'request'];
+ *                       super_admin → ['dashboard', 'kamar', 'finance'].
+ *   secondaryTabs     — karyawan → []; else → visibleTabs filtered by
+ *                       removing primaryTabs ids and 'form'.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -53,20 +43,38 @@ const allTabs = [
   { id: 'request', label: 'Permintaan' },
   { id: 'kamar', label: 'Kamar' },
   { id: 'finance', label: 'Keuangan' },
-  { id: 'analytics', label: 'Analitik' },
+  { id: 'ranking', label: 'Ranking' },
+  { id: 'chart', label: 'Grafik' },
   { id: 'pengaturan', label: 'Pengaturan' },
 ];
 
 const allowedTabsByRole = {
   karyawan: ['form', 'kamar', 'request'],
-  admin: allTabs.filter((t) => t.id !== 'pengaturan').map((t) => t.id),
+  admin: allTabs
+    .filter((t) => !['pengaturan', 'ranking', 'chart'].includes(t.id))
+    .map((t) => t.id),
   super_admin: allTabs.map((t) => t.id),
 };
 
-const primaryTabIdsByRole = (role) =>
-  role === 'karyawan'
-    ? ['kamar', 'request']
-    : ['dashboard', 'kamar', 'finance', 'request'];
+const primaryTabIdsByRole = (role) => {
+  if (role === 'karyawan') return ['kamar', 'request'];
+  // Admin: Permintaan replaces the "Lainnya" menu; super admin keeps the old layout.
+  return role === 'admin'
+    ? ['dashboard', 'kamar', 'finance', 'request']
+    : ['dashboard', 'kamar', 'finance'];
+};
+
+const visibleTabsFor = (role) => {
+  const allowed = allowedTabsByRole[role] || allTabs.map((t) => t.id);
+  return allTabs.filter((t) => allowed.includes(t.id));
+};
+
+const primaryTabsFor = (role) => {
+  const visible = visibleTabsFor(role);
+  return primaryTabIdsByRole(role)
+    .map((id) => visible.find((tab) => tab.id === id))
+    .filter(Boolean);
+};
 
 /**
  * Mirrors the `secondaryTabs` useMemo in App.jsx.
@@ -74,40 +82,26 @@ const primaryTabIdsByRole = (role) =>
  * @returns {Array<{id: string, label: string}>}
  */
 function computeSecondaryTabs(role) {
-  // visibleTabs = allTabs filtered by allowedTabsByRole[role]
-  const allowed = allowedTabsByRole[role] || allTabs.map((t) => t.id);
-  const visibleTabs = allTabs.filter((t) => allowed.includes(t.id));
-
   // karyawan never has a "more" menu
   if (role === 'karyawan') return [];
 
   // hidden = primary tab ids + 'form' (the centre input button)
   const hiddenFromPrimary = new Set([...primaryTabIdsByRole(role), 'form']);
-  return visibleTabs.filter((t) => !hiddenFromPrimary.has(t.id));
+  return visibleTabsFor(role).filter((t) => !hiddenFromPrimary.has(t.id));
 }
 
+const secondaryIds = (role) => computeSecondaryTabs(role).map((t) => t.id);
+
 // ---------------------------------------------------------------------------
-// Property 1: Akses menu Analitik berdasarkan role
+// Property 1: Menu sekunder (Ranking/Grafik/Pengaturan) sesuai role
 // ---------------------------------------------------------------------------
 
-describe('App — Property 1: Akses menu Analitik berdasarkan role', () => {
-  /**
-   * Property 1: Akses menu Analitik berdasarkan role
-   *
-   * Feature: analytics-dashboard, Property 1: Akses menu Analitik berdasarkan role
-   *
-   * For any `userRole` drawn from {'admin', 'super_admin', 'karyawan'}:
-   *   - IF role ∈ {'admin', 'super_admin'} THEN computeSecondaryTabs(role)
-   *     SHALL contain a tab with id === 'analytics' AND label === 'Analitik'.
-   *   - IF role === 'karyawan' THEN computeSecondaryTabs(role) SHALL NOT
-   *     contain any tab with id === 'analytics' (in fact, it returns [] for
-   *     karyawan, so no secondary tab is exposed at all).
-   *
-   * Validates: Requirements 1.1, 1.3
-   */
+describe('App — Property 1: Menu sekunder sesuai role', () => {
   it(
-    'Property 1: item "Analitik" muncul di secondaryTabs untuk admin/super_admin, tidak muncul untuk karyawan',
+    'Property 1: Ranking/Grafik hanya ada di secondaryTabs super_admin, tidak untuk admin/karyawan',
     () => {
+      // super_admin keeps full parity (ranking, chart, pengaturan in "Lainnya"),
+      // admin never sees them, karyawan has no secondary tabs at all.
       fc.assert(
         fc.property(
           fc.oneof(
@@ -116,34 +110,66 @@ describe('App — Property 1: Akses menu Analitik berdasarkan role', () => {
             fc.constant('karyawan')
           ),
           (userRole) => {
-            const secondaryTabs = computeSecondaryTabs(userRole);
-            const analyticsTab = secondaryTabs.find((t) => t.id === 'analytics');
+            const secondary = secondaryIds(userRole);
+            const visibleIds = visibleTabsFor(userRole).map((t) => t.id);
 
-            if (userRole === 'admin' || userRole === 'super_admin') {
-              // Must contain the Analitik tab.
-              expect(analyticsTab).toBeDefined();
-              expect(analyticsTab.label).toBe('Analitik');
-            } else {
-              // role === 'karyawan': must NOT contain the Analitik tab.
-              expect(analyticsTab).toBeUndefined();
-              // And, per App.jsx, karyawan has no secondary tabs at all.
-              expect(secondaryTabs).toEqual([]);
+            if (userRole === 'super_admin') {
+              expect(secondary).toContain('ranking');
+              expect(secondary).toContain('chart');
+              expect(secondary).toContain('pengaturan');
+            }
+
+            if (userRole === 'admin') {
+              expect(secondary).not.toContain('ranking');
+              expect(secondary).not.toContain('chart');
+              expect(secondary).not.toContain('pengaturan');
+              expect(visibleIds).not.toContain('ranking');
+              expect(visibleIds).not.toContain('chart');
+              expect(visibleIds).not.toContain('pengaturan');
+              // Admin's four primary tabs consume every visible tab.
+              expect(secondary).toEqual([]);
+            }
+
+            if (userRole === 'karyawan') {
+              expect(secondary).toEqual([]);
+              expect(visibleIds).not.toContain('ranking');
+              expect(visibleIds).not.toContain('chart');
             }
 
             return true;
           }
         ),
-        {
-          numRuns: 100,
-          verbose: false,
-        }
+        { numRuns: 100, verbose: false }
       );
     }
   );
+
+  it('Property 1b: primaryTabs admin 4 tab, super_admin 3 tab', () => {
+    // Layout contract: admin → 4 (Permintaan replaces "Lainnya"),
+    // super_admin → 3 (keeps the "Lainnya" menu).
+    fc.assert(
+      fc.property(
+        fc.constantFrom('admin', 'super_admin', 'karyawan'),
+        (userRole) => {
+          const primary = primaryTabsFor(userRole).map((t) => t.id);
+          expect(primary).toEqual(primaryTabIdsByRole(userRole));
+
+          if (userRole === 'admin') {
+            expect(primary).toEqual(['dashboard', 'kamar', 'finance', 'request']);
+          }
+          if (userRole === 'super_admin') {
+            expect(primary).toEqual(['dashboard', 'kamar', 'finance']);
+          }
+          return true;
+        }
+      ),
+      { numRuns: 100, verbose: false }
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Source of truth (continued) — redirect + renderContent logic for analytics
+// Source of truth (continued) — redirect logic
 // ---------------------------------------------------------------------------
 
 /**
@@ -173,71 +199,21 @@ function effectiveActiveTab(role, desiredTab) {
   return desiredTab;
 }
 
-/**
- * Mirrors the `case 'analytics':` branch of `renderContent()` in App.jsx:
- *
- *   case 'analytics':
- *     return (userRole === 'admin' || userRole === 'super_admin')
- *       ? <AnalyticsDashboard key={key} />
- *       : null;
- *
- * Returns the string `'AnalyticsDashboard'` when the component would be
- * rendered, or `null` otherwise. Used purely to assert that the
- * `AnalyticsDashboard` is not rendered for non-admin roles even if the
- * `analytics` tab is somehow active.
- */
-function renderAnalyticsBranch(role) {
-  return role === 'admin' || role === 'super_admin'
-    ? 'AnalyticsDashboard'
-    : null;
-}
-
 // ---------------------------------------------------------------------------
-// Property 2: Redirect karyawan dari tab analytics
+// Property 2: Redirect tab yang tidak diizinkan
 // ---------------------------------------------------------------------------
 
-describe('App — Property 2: Redirect karyawan dari tab analytics', () => {
-  /**
-   * Property 2: Redirect karyawan dari tab analytics
-   *
-   * Feature: analytics-dashboard, Property 2: Redirect karyawan dari tab analytics
-   *
-   * For any state where `userRole === 'karyawan'` and the desired
-   * `activeTab` is a tab the karyawan role is not allowed to see — most
-   * notably `'analytics'` — the App SHALL redirect the active tab to the
-   * default `'form'` and SHALL NOT render the `AnalyticsDashboard`
-   * component.
-   *
-   * The property is asserted in three layers, from specific to general:
-   *   1. The exact case from Requirement 1.6: role='karyawan',
-   *      activeTab='analytics' → effective tab is 'form' and analytics is
-   *      not rendered.
-   *   2. For any tab id drawn from `allTabs`, role='karyawan' redirects
-   *      every tab outside karyawan's allowed list back to 'form', and
-   *      analytics specifically is never rendered for karyawan.
-   *   3. For any (role, tabId) pair, the effective tab is always inside
-   *      that role's allowed list — i.e. the redirect never leaves the
-   *      user on a tab they are not permitted to view.
-   *
-   * Validates: Requirements 1.6
-   */
+describe('App — Property 2: Redirect tab yang tidak diizinkan', () => {
   it(
-    'Property 2: karyawan dengan activeTab="analytics" dialihkan ke "form" tanpa merender AnalyticsDashboard',
+    'Property 2: admin dialihkan ke "form" saat membuka ranking/chart/pengaturan',
     () => {
-      // Layer 1: the explicit, deterministic case from the requirement.
-      // Wrapped in fc.constant so it participates in the same property
-      // harness (and is checked across the full numRuns budget).
+      // Layer 1: explicit admin case for the super-admin-only menus.
       fc.assert(
         fc.property(
-          fc.constant('karyawan'),
-          fc.constant('analytics'),
+          fc.constant('admin'),
+          fc.constantFrom('ranking', 'chart', 'pengaturan'),
           (userRole, desiredTab) => {
-            const effective = effectiveActiveTab(userRole, desiredTab);
-            // Redirect: activeTab is forced to 'form'.
-            expect(effective).toBe('form');
-            // And the analytics renderContent branch returns null for
-            // karyawan, even if it had somehow been reached.
-            expect(renderAnalyticsBranch(userRole)).toBeNull();
+            expect(effectiveActiveTab(userRole, desiredTab)).toBe('form');
             return true;
           }
         ),
@@ -245,8 +221,6 @@ describe('App — Property 2: Redirect karyawan dari tab analytics', () => {
       );
 
       // Layer 2: generalised over every tab id for role='karyawan'.
-      // Confirms the redirect mechanism is correct for the whole tab space,
-      // and that analytics is never rendered for karyawan.
       fc.assert(
         fc.property(
           fc.constant('karyawan'),
@@ -259,14 +233,9 @@ describe('App — Property 2: Redirect karyawan dari tab analytics', () => {
               // Allowed tabs (form, kamar, request) stay as-is.
               expect(effective).toBe(desiredTab);
             } else {
-              // Disallowed tabs (including 'analytics') are redirected
-              // back to the default 'form' tab.
+              // Disallowed tabs redirect back to the default 'form' tab.
               expect(effective).toBe('form');
             }
-
-            // Karyawan never renders the AnalyticsDashboard, regardless of
-            // which tab was attempted.
-            expect(renderAnalyticsBranch(userRole)).toBeNull();
             return true;
           }
         ),
@@ -274,9 +243,6 @@ describe('App — Property 2: Redirect karyawan dari tab analytics', () => {
       );
 
       // Layer 3: generalised over every role × tab combination.
-      // The redirect must always settle the user on a tab inside their
-      // allowed list — i.e. it is impossible to be stuck on a forbidden
-      // tab after the effect runs.
       fc.assert(
         fc.property(
           fc.oneof(
@@ -291,14 +257,6 @@ describe('App — Property 2: Redirect karyawan dari tab analytics', () => {
 
             // The effective tab is always allowed for the user's role.
             expect(allowed).toContain(effective);
-
-            // Specifically: if karyawan ever lands on 'analytics' as the
-            // desired tab, the effective tab is never 'analytics'.
-            if (userRole === 'karyawan' && desiredTab === 'analytics') {
-              expect(effective).not.toBe('analytics');
-              expect(effective).toBe('form');
-            }
-
             return true;
           }
         ),

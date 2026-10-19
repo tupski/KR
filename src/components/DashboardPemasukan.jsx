@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, Calendar, Share2, Edit, Trash2, UserCheck, Image as ImageIcon, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TrendingUp, Calendar, Share2, Edit, Trash2, UserCheck, Image as ImageIcon, Download, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -8,6 +8,7 @@ import { supabase } from '@/lib/customSupabaseClient';
 import EditTransaksiModal from '@/components/EditTransaksiModal';
 import ManajemenDeposit from '@/components/ManajemenDeposit';
 import { addDays, addMonths, format, startOfDay, startOfMonth } from 'date-fns';
+import * as XLSX from 'xlsx';
 import PinInput from '@/components/PinInput';
 import { resolveStorageUrl } from '@/lib/storageUrl';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -17,6 +18,9 @@ const ITEMS_PER_PAGE = 6;
 
 const DashboardPemasukan = () => {
   const { user, userRole } = useAuth();
+  // Admin (role 'admin') gets the trimmed view: no export, no summary cards.
+  // Super admin keeps the full behaviour.
+  const isAdminRole = userRole === 'admin';
   const [activeMainTab, setActiveMainTab] = useState('umum'); // 'umum', 'deposit'
   const [filterType, setFilterType] = useState('harian');
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -27,7 +31,7 @@ const DashboardPemasukan = () => {
   const [shift, setShift] = useState('semua');
   const [transaksiList, setTransaksiList] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [stats, setStats] = useState({ tunai: 0, transfer: 0 });
+  const [stats, setStats] = useState({ tunai: 0, transfer: 0, total: 0, jumlahTransaksi: 0, transaksiHariIni: 0 });
   const [lokasiOptions, setLokasiOptions] = useState(['Semua Lokasi']);
   const [editingTransaksi, setEditingTransaksi] = useState(null);
   const [showPinModal, setShowPinModal] = useState(false);
@@ -63,6 +67,7 @@ const DashboardPemasukan = () => {
     }
     return formatRentalDuration(durationHours);
   };
+  const formatDateTime = (iso) => new Date(iso).toLocaleString('id-ID');
   const formatWhatsappDateTime = (iso) => {
     const parts = new Intl.DateTimeFormat('id-ID', {
       day: '2-digit',
@@ -137,7 +142,7 @@ const DashboardPemasukan = () => {
       // Query A — lightweight stats aggregate (cash + transfer only, capped at 5000 rows)
       let statsQuery = supabase
         .from('transactions')
-        .select('cash_amount, transfer_amount', { count: 'exact' })
+        .select('checkin_at, created_at, cash_amount, transfer_amount', { count: 'exact' })
         .or(dateOr)
         .order('checkin_at', { ascending: false, nullsFirst: false })
         .range(0, 4999);
@@ -160,23 +165,36 @@ const DashboardPemasukan = () => {
       if (listResult.error) throw listResult.error;
 
       const allForStats = statsResult.data || [];
+      // Supabase returns the uncapped row count for the same filtered aggregate query.
       const count = statsResult.count || 0;
+      const todayStart = startOfDay(new Date());
+      const todayEndExclusive = addDays(todayStart, 1);
+      const transaksiHariIni = allForStats.reduce((total, t) => {
+        const stamp = t.checkin_at || t.created_at;
+        if (!stamp) return total;
+        const at = new Date(stamp).getTime();
+        return at >= todayStart.getTime() && at < todayEndExclusive.getTime() ? total + 1 : total;
+      }, 0);
 
       // Deposit TIDAK masuk ke omset
       const totalTunai = allForStats.reduce((sum, t) => sum + (t.cash_amount || 0), 0);
       const totalTransfer = allForStats.reduce((sum, t) => sum + (t.transfer_amount || 0), 0);
 
-      setStats({
+      setStats((prev) => ({
+        ...prev,
         tunai: totalTunai,
         transfer: totalTransfer,
-      });
+        total: totalTunai + totalTransfer,
+        jumlahTransaksi: count,
+        transaksiHariIni,
+      }));
       setTotalCount(count);
       setTransaksiList(listResult.data || []);
       setCurrentPage(page);
     } catch (error) {
       setTransaksiList([]);
       setTotalCount(0);
-      setStats({ tunai: 0, transfer: 0 });
+      setStats((prev) => ({ ...prev, tunai: 0, transfer: 0, total: 0, jumlahTransaksi: 0, transaksiHariIni: 0 }));
       toast({ title: 'Gagal memuat transaksi', description: error.message, variant: 'destructive' });
     }
   }, [filterType, startDate, endDate, startTime, endTime, lokasi, shift, debouncedKeyword]);
@@ -266,6 +284,7 @@ const DashboardPemasukan = () => {
       toast({ title: 'Gagal menghapus', description: error.message, variant: 'destructive' });
     } else {
       setTransaksiList((prev) => prev.filter((t) => t.id !== id));
+      setStats((prev) => ({ ...prev, jumlahTransaksi: Math.max((prev.jumlahTransaksi || 1) - 1, 0) }));
       const removedInfo = data?.removed_fee_rows ? `, komisi terhapus ${data.removed_fee_rows}` : '';
       const { data: stillExists, error: verifyError } = await supabase
         .from('transactions')
@@ -372,6 +391,81 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
     }
   };
 
+  // Export is only reachable for non-admin roles (super admin), but the handler
+  // stays defined for every role so the render branch remains simple.
+  const handleExport = async () => {
+    // transaksiList only holds the current page — fetch all rows for export separately.
+    try {
+      let fromDate;
+      let toDate;
+
+      switch (filterType) {
+        case 'harian':
+          fromDate = startOfDay(parseLocalDateInput(startDate));
+          toDate = addDays(fromDate, 1);
+          break;
+        case 'bulanan': {
+          const monthDate = parseLocalDateInput(startDate);
+          fromDate = startOfMonth(monthDate);
+          toDate = addMonths(fromDate, 1);
+          break;
+        }
+        case 'rentang':
+          fromDate = new Date(`${startDate}T${startTime || '00:00'}:00`);
+          toDate = new Date(new Date(`${endDate}T${endTime || '23:59'}:59`).getTime() + 1000);
+          break;
+        default:
+          fromDate = startOfDay(new Date());
+          toDate = addDays(fromDate, 1);
+      }
+
+      const fromIso = fromDate.toISOString();
+      const toIso = toDate.toISOString();
+      const dateOr = `and(checkin_at.gte.${fromIso},checkin_at.lt.${toIso}),and(checkin_at.is.null,created_at.gte.${fromIso},created_at.lt.${toIso})`;
+
+      let exportQuery = supabase
+        .from('transactions')
+        .select('id, checkin_at, created_at, rental_duration, room_number, apartment_location, customer_name, marketing_name, input_by, shift, cash_amount, transfer_amount, marketing_fee')
+        .or(dateOr)
+        .order('checkin_at', { ascending: false, nullsFirst: false })
+        .range(0, 4999);
+
+      if (lokasi !== 'semua') exportQuery = exportQuery.eq('apartment_location', lokasi);
+      if (shift !== 'semua') exportQuery = exportQuery.eq('shift', shift);
+      const keyword = debouncedKeyword.trim();
+      if (keyword) {
+        exportQuery = exportQuery.or(
+          `customer_name.ilike.%${keyword}%,marketing_name.ilike.%${keyword}%,input_by.ilike.%${keyword}%,apartment_location.ilike.%${keyword}%,room_number.ilike.%${keyword}%`
+        );
+      }
+
+      const { data: allData, error: exportError } = await exportQuery;
+      if (exportError) throw exportError;
+
+      const dataToExport = (allData || []).map((t) => ({
+        'Waktu Check-in': formatDateTime(t.checkin_at || t.created_at),
+        'Nama Customer': t.customer_name,
+        'Nama Marketing': t.marketing_name,
+        Lokasi: t.apartment_location,
+        Kamar: t.room_number,
+        'Lama Sewa': formatRentalDuration(t.rental_duration),
+        Shift: t.shift,
+        Tunai: t.cash_amount,
+        Transfer: t.transfer_amount,
+        Total: (t.cash_amount || 0) + (t.transfer_amount || 0),
+        'Fee Marketing': t.marketing_fee,
+        'Diinput Oleh': t.input_by,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Transaksi');
+      XLSX.writeFile(workbook, `Laporan_Transaksi_${startDate}_${endDate}.xlsx`);
+    } catch (err) {
+      toast({ title: 'Gagal ekspor', description: err.message, variant: 'destructive' });
+    }
+  };
+
   // Server-side pagination: transaksiList already holds only the current page's rows.
   const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
   const paginatedTransaksi = transaksiList;
@@ -420,6 +514,11 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
               <div className="glassmorphic-card space-y-4 p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="flex items-center gap-2 font-bold text-gray-800"><Calendar className="h-5 w-5 text-blue-500" /> Filter Data</h2>
+                  {!isAdminRole && (
+                    <Button onClick={handleExport} size="sm" variant="outline" className="border-green-300 bg-green-100 text-green-800 hover:bg-green-200">
+                      <Download className="mr-2 h-4 w-4" /> Ekspor
+                    </Button>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   {['harian', 'bulanan', 'rentang'].map((tab) => (
@@ -470,6 +569,12 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                {!isAdminRole && (
+                  <div className="glassmorphic-card col-span-2 p-5">
+                    <h3 className="text-base font-bold text-blue-900">Total Transaksi Hari Ini</h3>
+                    <p className="text-2xl font-extrabold leading-tight text-blue-700 sm:text-3xl">{stats.transaksiHariIni} <span className="text-base">transaksi</span></p>
+                  </div>
+                )}
                 <div className="glassmorphic-card p-4">
                   <h3 className="text-base font-bold text-green-900">Tunai (Filter)</h3>
                   <p className="break-all text-xl font-extrabold leading-tight text-green-700 sm:text-2xl">{formatRupiah(stats.tunai)}</p>
@@ -479,6 +584,14 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
                   <p className="break-all text-xl font-extrabold leading-tight text-cyan-700 sm:text-2xl">{formatRupiah(stats.transfer)}</p>
                 </div>
               </div>
+
+              {!isAdminRole && (
+                <div className="glassmorphic-card p-5">
+                  <h3 className="text-base font-bold text-red-900">Total Pemasukan (Filter)</h3>
+                  <p className="break-all text-2xl font-extrabold leading-tight text-red-700 sm:text-3xl">{formatRupiah(stats.total)}</p>
+                  <p className="mt-1 text-sm">{stats.jumlahTransaksi} total transaksi</p>
+                </div>
+              )}
 
               <div className="glassmorphic-card p-5">
                 <h2 className="mb-4 font-bold text-gray-800">Detail Transaksi</h2>
