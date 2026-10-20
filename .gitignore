@@ -70,11 +70,12 @@ Desktop.ini
 .clineignore
 .kiro/*
 agent-preferences.json
-AGENTS.md
+# AGENTS.md
 github.com_supabase-community_supabase-mcp
 -p
 
-# Planning / scratch docs
+# Planning / scratch 
+docs/*
 planbaru.md
 implementation_plan.md
 plan-auditCodebase.prompt.md
