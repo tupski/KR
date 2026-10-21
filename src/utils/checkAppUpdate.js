@@ -32,7 +32,7 @@ const storePendingVersion = (version) => {
   getStorage('localStorage')?.setItem(PENDING_UPDATE_STORAGE_KEY, version);
 };
 
-const isFormDirty = () => {
+export const isFormDirty = () => {
   const storage = getStorage('localStorage');
   if (!storage) return false;
   if (storage.getItem(LEGACY_FORM_DIRTY_KEY) === '1') return true;

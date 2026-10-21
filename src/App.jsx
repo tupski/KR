@@ -21,6 +21,7 @@ import AnnouncementBanner from '@/components/AnnouncementBanner';
 import ComposeAnnouncement from '@/components/ComposeAnnouncement';
 import { supabase } from '@/lib/customSupabaseClient';
 import { NOTIFICATIONS_ENABLED } from '@/config/featureFlags';
+import { isFormDirty } from '@/utils/checkAppUpdate';
 import AccountSettings from '@/components/AccountSettings';
 import KalenderLibur from '@/components/KalenderLibur';
 import {
@@ -42,6 +43,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+// Static constants — di-hoist ke module scope supaya bisa dipakai sebagai
+// dependency useMemo yang stabil (reference tidak berubah tiap render)
+const allTabs = [
+  { id: 'form', label: 'Input', icon: Camera },
+  { id: 'dashboard', label: 'Laporan', icon: TrendingUp },
+  { id: 'request', label: 'Permintaan', icon: Send },
+  { id: 'kamar', label: 'Kamar', icon: DoorOpen },
+  { id: 'finance', label: 'Keuangan', icon: FileText },
+  { id: 'ranking', label: 'Ranking', icon: Trophy },
+  { id: 'chart', label: 'Grafik', icon: PieChart },
+  { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
+];
+
+const allowedTabsByRole = {
+  karyawan: ['form', 'kamar', 'request'],
+  admin: allTabs
+    .filter((tab) => !['pengaturan', 'ranking', 'chart'].includes(tab.id))
+    .map((tab) => tab.id),
+  super_admin: allTabs.map((tab) => tab.id),
+};
 
 function App() {
   // Integrate page visibility hook — prevents reload on tab switch
@@ -204,9 +226,9 @@ function App() {
       return;
     }
 
-    // Skip if form is dirty
-    const isFormDirty = localStorage.getItem('kr:form-dirty') === '1';
-    if (isFormDirty) {
+    // Skip if form is dirty (cek semua key kr:form-dirty:*, termasuk legacy key)
+    const isFormDirtyNow = isFormDirty();
+    if (isFormDirtyNow) {
       console.log('[App.jsx] refreshUnread skipped — form is dirty');
       return;
     }
@@ -315,27 +337,14 @@ function App() {
     setActiveTab(tabId);
   };
 
-  const allTabs = [
-    { id: 'form', label: 'Input', icon: Camera },
-    { id: 'dashboard', label: 'Laporan', icon: TrendingUp },
-    { id: 'request', label: 'Permintaan', icon: Send },
-    { id: 'kamar', label: 'Kamar', icon: DoorOpen },
-    { id: 'finance', label: 'Keuangan', icon: FileText },
-    { id: 'ranking', label: 'Ranking', icon: Trophy },
-    { id: 'chart', label: 'Grafik', icon: PieChart },
-    { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
-  ];
-
-  const allowedTabsByRole = {
-    karyawan: ['form', 'kamar', 'request'],
-    admin: allTabs
-      .filter((tab) => !['pengaturan', 'ranking', 'chart'].includes(tab.id))
-      .map((tab) => tab.id),
-    super_admin: allTabs.map((tab) => tab.id),
-  };
-
-  const visibleTabIds = allowedTabsByRole[userRole] || allTabs.map((tab) => tab.id);
-  const visibleTabs = allTabs.filter((tab) => visibleTabIds.includes(tab.id));
+  const visibleTabIds = useMemo(
+    () => allowedTabsByRole[userRole] || allTabs.map((tab) => tab.id),
+    [userRole]
+  );
+  const visibleTabs = useMemo(
+    () => allTabs.filter((tab) => visibleTabIds.includes(tab.id)),
+    [visibleTabIds]
+  );
   const activeTabStorageKey = useMemo(() => {
     const userId = session?.user?.id;
     return userId ? `kr_active_tab_${userId}` : 'kr_active_tab_guest';
@@ -377,9 +386,9 @@ function App() {
     console.log('[App.jsx] activeTab changed to:', activeTab);
     // Proteksi: jangan reset tab jika form dirty dan tab berubah karena focus/visibility
     if (!visibleTabIds.includes(activeTab)) {
-      // Jika form dirty, jangan paksa pindah tab
-      const isFormDirty = localStorage.getItem('kr:form-dirty') === '1';
-      if (isFormDirty) {
+      // Jika form dirty, jangan paksa pindah tab (cek semua key kr:form-dirty:*)
+      const isFormDirtyNow = isFormDirty();
+      if (isFormDirtyNow) {
         console.log('[App.jsx] activeTab blocked — form is dirty, keeping current tab');
         return;
       }

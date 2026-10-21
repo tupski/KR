@@ -16,13 +16,23 @@ export const AuthProvider = ({ children }) => {
   // saat TOKEN_REFRESHED atau SIGNED_IN ulang
   const initialLoadDone = useRef(false);
 
+  // Ref user aktif — dipakai untuk membedakan same-user refresh vs ganti user
+  const userRef = useRef(null);
+  useEffect(() => { userRef.current = user?.id ?? null; }, [user]);
+
+  // Generasi request role sync — mencegah response stale menimpa state terbaru
+  const roleSyncGenRef = useRef(0);
+
   const checkUserRole = useCallback(async (userId) => {
+    // Guard stale: role hanya di-apply jika user masih yang sama saat response tiba
     try {
       const { data, error } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
         .maybeSingle();
+
+      if (userRef.current !== userId) return;
 
       if (error && error.code !== 'PGRST116') {
         console.error('Error checking user role:', error);
@@ -36,22 +46,38 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error in checkUserRole:', error);
-      setUserRole('karyawan');
+      if (userRef.current === userId) setUserRole('karyawan');
     }
   }, []);
 
-  // handleSession: showLoading hanya untuk initial load, bukan token refresh
+  // handleSession: showLoading hanya untuk initial load, bukan token refresh.
+  // Same-user refresh (SIGNED_IN/TOKEN_REFRESHED saat recovery) TIDAK restart
+  // role sync — mencegah remount konten terautentikasi (form state hilang).
   const handleSession = useCallback(async (currentSession, showLoading = false) => {
+    const incomingUserId = currentSession?.user?.id ?? null;
+    const previousUserId = userRef.current;
+
     if (showLoading) setLoading(true);
 
     setSession(currentSession);
     setUser(currentSession?.user ?? null);
+    userRef.current = incomingUserId;
 
-    if (currentSession?.user) {
-      setIsSyncingRole(true);
-      await checkUserRole(currentSession.user.id);
-      setIsSyncingRole(false);
+    if (incomingUserId) {
+      const isSameUser = previousUserId === incomingUserId;
+      if (!isSameUser) {
+        setIsSyncingRole(true);
+        const gen = ++roleSyncGenRef.current;
+        try {
+          await checkUserRole(incomingUserId);
+        } finally {
+          // Hanya clear jika masih request terbaru (response lama tidak menimpa)
+          if (gen === roleSyncGenRef.current) setIsSyncingRole(false);
+        }
+      }
+      // Same user: jangan restart role sync, jangan sentuh isSyncingRole
     } else {
+      setIsSyncingRole(false);
       setUserRole(null);
     }
 
@@ -73,6 +99,7 @@ export const AuthProvider = ({ children }) => {
 
         setSession(initialSession);
         setUser(initialSession?.user ?? null);
+        userRef.current = initialSession?.user?.id ?? null;
 
         if (initialSession?.user) {
           setIsSyncingRole(true);
@@ -118,7 +145,17 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        // SIGNED_IN / USER_UPDATED: update tanpa loading jika sudah init
+        // INITIAL_SESSION (supabase-js v2): sama seperti same-user no-op
+        if (event === 'INITIAL_SESSION') {
+          if (currentSession) {
+            setSession(currentSession);
+            setUser(currentSession.user ?? null);
+          }
+          return;
+        }
+
+        // SIGNED_IN / USER_UPDATED: handleSession kini no-op role sync untuk
+        // same-user refresh; role sync hanya restart saat ganti user sungguhan
         if (initialLoadDone.current) {
           await handleSession(currentSession, false);
         }
@@ -148,9 +185,13 @@ export const AuthProvider = ({ children }) => {
 
   // ── Sesi Blob (C-2): tukar JWT dengan cookie HttpOnly untuk <img src> ─────
   // /api/blob memvalidasi token di setiap request; cookie kadaluarsa aman.
+  // Dedupe: hanya POST saat token benar-benar berubah (skip token refresh sama)
+  const lastBlobTokenRef = useRef(null);
   useEffect(() => {
     const token = session?.access_token;
     if (!token) return;
+    if (token === lastBlobTokenRef.current) return;
+    lastBlobTokenRef.current = token;
     fetch('/api/blob-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
