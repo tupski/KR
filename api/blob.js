@@ -23,6 +23,23 @@ const ALLOWED_ORIGINS = [
 
 const BLOB_AUTH_COOKIE = 'kr_blob_session';
 
+// [blob-5xx] diagnostics — boolean-only env presence, never log values.
+function logBlobEnvPresence() {
+  const presence = {
+    BLOB_READ_WRITE_TOKEN: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    VERCEL_BLOB_BASE_URL: Boolean(process.env.VERCEL_BLOB_BASE_URL),
+    VERCEL_BLOB_STORE_ID: Boolean(process.env.VERCEL_BLOB_STORE_ID),
+  };
+  console.error('[blob-5xx] env presence:', JSON.stringify(presence));
+  const rawToken = process.env.BLOB_READ_WRITE_TOKEN || '';
+  const m = /^vercel_blob_rw_([A-Za-z0-9]+)_/.exec(rawToken);
+  const storeId = process.env.VERCEL_BLOB_STORE_ID || '';
+  const tokenStoreId = m ? m[1] : '';
+  const envStoreId = storeId.replace(/^store_/i, '').toLowerCase();
+  const match = Boolean(tokenStoreId && envStoreId && tokenStoreId === envStoreId);
+  console.error(`[blob-5xx] storeId token-vs-env match: ${match}`);
+}
+
 // Namespace yang diizinkan -> sumber kebenaran kepemilikan objek.
 // Semua lookup memakai service role key (server-only) karena query
 // melintasi baris milik user lain.
@@ -115,6 +132,7 @@ async function findObjectOwnership(supabase, parsed) {
 }
 
 export default async function handler(req, res) {
+try {
   setCors(req, res);
 
   if (req.method === 'OPTIONS') {
@@ -127,9 +145,11 @@ export default async function handler(req, res) {
 
   const { url: supabaseUrl, anonKey, serviceKey } = getSupabaseConfig();
   if (!supabaseUrl || !anonKey) {
+    console.error('[blob-5xx] missing-env SUPABASE_URL (atau VITE_SUPABASE_URL) / SUPABASE_ANON_KEY (atau VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY / VITE_SUPABASE_ANON_KEY)');
     return res.status(500).json({ error: 'Konfigurasi Supabase belum lengkap.' });
   }
   if (!serviceKey) {
+    console.error('[blob-5xx] missing-env SUPABASE_SERVICE_ROLE_KEY');
     return res.status(500).json({ error: 'Konfigurasi SUPABASE_SERVICE_ROLE_KEY belum lengkap.' });
   }
 
@@ -195,8 +215,16 @@ export default async function handler(req, res) {
       : derivedBaseUrl;
 
     if (!token2 || !baseUrl) {
+      const missing = [];
+      if (!token2) missing.push('BLOB_READ_WRITE_TOKEN');
+      if (!baseUrl) {
+        if (!storeId && !normalizedEnvBaseUrl) missing.push('VERCEL_BLOB_STORE_ID (dan VERCEL_BLOB_BASE_URL tidak valid/kosong)');
+        logBlobEnvPresence();
+      }
+      console.error(`[blob-5xx] missing-env ${missing.join(', ') || 'unknown-blob-config'}`);
       return res.status(500).json({ error: 'Konfigurasi Blob belum lengkap.' });
     }
+    logBlobEnvPresence();
 
     const fileUrl = `${baseUrl.replace(/\/+$/, '')}/${parsed.pathname}`;
     const upstream = await fetch(fileUrl, {
@@ -207,6 +235,9 @@ export default async function handler(req, res) {
 
     if (!upstream.ok) {
       console.warn(`[blob-404] pathname=${parsed.pathname} reason=upstream-not-ok (upstreamStatus=${upstream.status}, baseUrl=${baseUrl})`);
+      if (upstream.status !== 404) {
+        console.error(`[blob-5xx] upstream-not-ok status=${upstream.status} pathname=${parsed.pathname}`);
+      }
       return res.status(upstream.status === 404 ? 404 : 502).json({ error: 'Gagal mengambil file privat.' });
     }
 
@@ -219,5 +250,12 @@ export default async function handler(req, res) {
     return res.status(200).send(data);
   } catch (error) {
     return res.status(500).json({ error: error?.message || 'Terjadi kesalahan saat membaca file Blob.' });
+  }
+  } catch (err) {
+  console.error('[blob-5xx] unhandled', err?.name, err?.message, err?.stack);
+  if (!res.headersSent) {
+    return res.status(500).json({ error: 'Terjadi kesalahan saat membaca file Blob.' });
+  }
+  return res.end();
   }
 }
