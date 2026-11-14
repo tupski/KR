@@ -635,6 +635,20 @@ Diinput oleh: ${transaksi.input_by || '-'} (Shift: ${transaksi.shift || '-'})`;
                               </DialogContent>
                             </Dialog>
                           )}
+                          {transaksi.ktp_image_url && (
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button size="icon" variant="outline" className="h-8 w-8"><ImageIcon className="h-4 w-4" /></Button>
+                              </DialogTrigger>
+                              <DialogContent className="bg-black/80">
+                                <DialogHeader>
+                                  <DialogTitle className="text-white">KTP</DialogTitle>
+                                  <DialogDescription className="text-gray-300">Pratinjau gambar KTP tamu transaksi.</DialogDescription>
+                                </DialogHeader>
+                                <img src={resolveStorageUrl(transaksi.ktp_image_url)} alt="KTP" className="w-full rounded-lg" />
+                              </DialogContent>
+                            </Dialog>
+                          )}
                           <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => handleEditClick(transaksi)}><Edit className="h-4 w-4" /></Button>
                           <Button size="icon" variant="destructive" className="h-8 w-8" onClick={() => handleDelete(transaksi.id)}><Trash2 className="h-4 w-4" /></Button>
                           <Button size="icon" onClick={() => handleShare(transaksi)} className="h-8 w-8 bg-green-500"><Share2 className="h-4 w-4" /></Button>
