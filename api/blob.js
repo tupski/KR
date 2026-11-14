@@ -163,6 +163,7 @@ export default async function handler(req, res) {
     const ownership = await findObjectOwnership(supabase, parsed);
     if (!ownership) {
       // 404 juga untuk "bukan milikmu" — jangan konfirmasi keberadaan objek.
+      console.warn(`[blob-404] pathname=${parsed.pathname} reason=no-ownership-row (folder=${parsed.folder}, tidak ada baris DB yang match)`);
       return res.status(404).json({ error: 'Objek tidak ditemukan.' });
     }
 
@@ -176,6 +177,7 @@ export default async function handler(req, res) {
       if (roleError) throw roleError;
       role = roleRow?.role || 'karyawan';
       if (!['admin', 'super_admin'].includes(role)) {
+        console.warn(`[blob-404] pathname=${parsed.pathname} reason=not-owner-non-admin (ownerUserId=${ownership.ownerUserId}, requester=${user.id}, role=${role})`);
         return res.status(404).json({ error: 'Objek tidak ditemukan.' });
       }
     }
@@ -204,6 +206,7 @@ export default async function handler(req, res) {
     });
 
     if (!upstream.ok) {
+      console.warn(`[blob-404] pathname=${parsed.pathname} reason=upstream-not-ok (upstreamStatus=${upstream.status}, baseUrl=${baseUrl})`);
       return res.status(upstream.status === 404 ? 404 : 502).json({ error: 'Gagal mengambil file privat.' });
     }
 
