@@ -118,17 +118,57 @@ function extractToken(req) {
 async function findObjectOwnership(supabase, parsed) {
   const rule = PATHNAME_RULES[parsed.folder];
   const ownerColumn = rule.ownerColumn || 'user_id';
-  const coarsePattern = `%/${parsed.folder}/%`;
-  const { data, error } = await supabase
-    .from(rule.table)
-    .select(`${rule.column}, ${ownerColumn}`)
-    .like(rule.column, coarsePattern)
-    .range(0, 999);
-  if (error) throw error;
-  const rows = data || [];
-  const hit = rows.find(
-    (r) => typeof r[rule.column] === 'string' && r[rule.column].includes(parsed.pathname)
-  );
+  // Dual-format: nilai proxy di DB ditulis dalam DUA bentuk —
+  //   literal: /api/blob?pathname=avatars/123.jpg
+  //   encoded: /api/blob?pathname=avatars%2F123.jpg (hasil encodeURIComponent
+  //   di api/upload.js dan disimpan apa adanya oleh AccountSettings).
+  // Filter DB KOARSE dijalankan dua kali (literal, lalu encoded bila perlu).
+  // Kecocokan PERSIS tetap di JS dengan normalisasi decode — pathname user
+  // tidak pernah disisipkan ke pola LIKE (anti wildcard injection).
+  const coarseQuery = (pattern) =>
+    supabase
+      .from(rule.table)
+      .select(`${rule.column}, ${ownerColumn}`)
+      .like(rule.column, pattern)
+      .range(0, 999);
+
+  // Escape LIKE wildcard (Postgres default escape char: backslash) agar
+  // `_`/`%` pada filename tidak melebar pola. Pola kini mencakup folder +
+  // filename persis (folder/filename tetap diprefix wildcard untuk menangkap
+  // URL proxy maupun URL blob penuh legacy). Kecocokan otorisasi tetap
+  // divalidasi PERSIS di JS di bawah — pola di sini hanya mempersempit
+  // candidate set agar tidak melewati batas .range(0, 999) pada tabel besar
+  // (transactions bisa >1000 baris per bulan; filter folder-saja melewatkan
+  // baris target dan menghasilkan 404 no-ownership-row).
+  const escapeLike = (s) => s.replace(/([%_\\])/g, '\\$1');
+  const literalPattern = `%${parsed.folder}/${escapeLike(parsed.filename)}%`;
+  const encodedPattern =
+    `%${encodeURIComponent(parsed.folder)}%2F${escapeLike(encodeURIComponent(parsed.filename))}%`;
+
+  let rows = [];
+  const literal = await coarseQuery(literalPattern);
+  if (literal.error) throw literal.error;
+  rows = literal.data || [];
+
+  if (rows.length === 0) {
+    const encoded = await coarseQuery(encodedPattern);
+    if (encoded.error) throw encoded.error;
+    rows = encoded.data || [];
+  }
+
+  const decodeSafe = (v) => {
+    try {
+      return decodeURIComponent(v);
+    } catch (_e) {
+      return v;
+    }
+  };
+  const hit = rows.find((r) => {
+    if (typeof r[rule.column] !== 'string') return false;
+    const raw = r[rule.column];
+    // Match terhadap nilai mentah DAN bentuk decoded (dual-format).
+    return raw.includes(parsed.pathname) || decodeSafe(raw).includes(parsed.pathname);
+  });
   if (!hit) return null;
   return { ownerUserId: hit[ownerColumn] || null, table: rule.table };
 }
@@ -184,7 +224,6 @@ try {
     // ── 3) Otorisasi: pemilik ATAU admin/super_admin ───────────────────────
     const ownership = await findObjectOwnership(supabase, parsed);
     if (!ownership) {
-      // 404 juga untuk "bukan milikmu" — jangan konfirmasi keberadaan objek.
       console.warn(`[blob-404] pathname=${parsed.pathname} reason=no-ownership-row (folder=${parsed.folder}, tidak ada baris DB yang match)`);
       return res.status(404).json({ error: 'Objek tidak ditemukan.' });
     }
@@ -204,7 +243,7 @@ try {
       }
     }
 
-    // ── 4) Ambil file dari Blob privat ─────────────────────────────────────
+    // ── 4) Ambil file dari Blob ─────────────────────────────────────
     const token2 = process.env.BLOB_READ_WRITE_TOKEN;
     const baseUrlFromEnvRaw = process.env.VERCEL_BLOB_BASE_URL;
     const storeId = process.env.VERCEL_BLOB_STORE_ID;
