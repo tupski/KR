@@ -216,4 +216,50 @@ describe('C-2 — /api/blob security', () => {
     await handler({ method: 'DELETE', headers: {}, query: {} }, res);
     expect(res.statusCode).toBe(405);
   });
+
+  // ── avatars: user_profiles.ownerColumn = 'id' (PK, bukan user_id) ─────────
+  describe('avatars folder (user_profiles, ownerColumn=id)', () => {
+    const AVATAR_PATH = 'avatars/1788855954761-avatar.webp';
+
+    it('pemilik (user_profiles.id = auth user id) -> 200', async () => {
+      supabaseState.ownership = {
+        id: 'u-employee',
+        avatar_url: `/api/blob?pathname=${AVATAR_PATH}`,
+      };
+      const res = makeRes();
+      await handler(
+        { method: 'GET', headers: { authorization: 'Bearer ok' }, query: { pathname: AVATAR_PATH } },
+        res
+      );
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('bukan pemilik + role karyawan -> 404', async () => {
+      supabaseState.ownership = {
+        id: 'u-someone-else',
+        avatar_url: `/api/blob?pathname=${AVATAR_PATH}`,
+      };
+      const res = makeRes();
+      await handler(
+        { method: 'GET', headers: { authorization: 'Bearer ok' }, query: { pathname: AVATAR_PATH } },
+        res
+      );
+      expect(res.statusCode).toBe(404);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('admin boleh membaca avatar milik user lain -> 200', async () => {
+      supabaseState.ownership = {
+        id: 'u-someone-else',
+        avatar_url: `/api/blob?pathname=${AVATAR_PATH}`,
+      };
+      supabaseState.roleToReturn = 'admin';
+      const res = makeRes();
+      await handler(
+        { method: 'GET', headers: { authorization: 'Bearer ok' }, query: { pathname: AVATAR_PATH } },
+        res
+      );
+      expect(res.statusCode).toBe(200);
+    });
+  });
 });

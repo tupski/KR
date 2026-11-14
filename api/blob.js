@@ -44,12 +44,13 @@ function logBlobEnvPresence() {
 // Semua lookup memakai service role key (server-only) karena query
 // melintasi baris milik user lain.
 const PATHNAME_RULES = {
-  'ktp-images': { table: 'transactions', column: 'ktp_image_url' },
-  'transfer-proofs': { table: 'transactions', column: 'transfer_proof_url' },
-  'deposit-refunds': { table: 'transactions', column: 'deposit_refund_proof_url' },
-  'tagihan-proofs': { table: 'tagihan_bulanan', column: 'proof_url' },
-  'fee-proofs': { table: 'tagihan_fee_lunas', column: 'proof_url' },
-  'avatars': { table: 'user_profiles', column: 'avatar_url' },
+  'ktp-images': { table: 'transactions', column: 'ktp_image_url', ownerColumn: 'user_id' },
+  'transfer-proofs': { table: 'transactions', column: 'transfer_proof_url', ownerColumn: 'user_id' },
+  'deposit-refunds': { table: 'transactions', column: 'deposit_refund_proof_url', ownerColumn: 'user_id' },
+  'tagihan-proofs': { table: 'tagihan_bulanan', column: 'proof_url', ownerColumn: 'user_id' },
+  'fee-proofs': { table: 'tagihan_fee_lunas', column: 'proof_url', ownerColumn: 'user_id' },
+  // user_profiles PK adalah `id` (= auth.users.id), bukan user_id.
+  'avatars': { table: 'user_profiles', column: 'avatar_url', ownerColumn: 'id' },
 };
 
 const setCors = (req, res) => {
@@ -116,10 +117,11 @@ function extractToken(req) {
 // Postgres, jadi jangan pernah menyisipkan pathname user ke pola LIKE.
 async function findObjectOwnership(supabase, parsed) {
   const rule = PATHNAME_RULES[parsed.folder];
+  const ownerColumn = rule.ownerColumn || 'user_id';
   const coarsePattern = `%/${parsed.folder}/%`;
   const { data, error } = await supabase
     .from(rule.table)
-    .select(`${rule.column}, user_id`)
+    .select(`${rule.column}, ${ownerColumn}`)
     .like(rule.column, coarsePattern)
     .range(0, 999);
   if (error) throw error;
@@ -128,7 +130,7 @@ async function findObjectOwnership(supabase, parsed) {
     (r) => typeof r[rule.column] === 'string' && r[rule.column].includes(parsed.pathname)
   );
   if (!hit) return null;
-  return { ownerUserId: hit.user_id || null, table: rule.table };
+  return { ownerUserId: hit[ownerColumn] || null, table: rule.table };
 }
 
 export default async function handler(req, res) {
